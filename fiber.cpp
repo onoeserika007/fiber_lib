@@ -1,53 +1,44 @@
 #include "fiber.h"
 #include "context.h"
+#include "scheduler.h"
 #include <atomic>
 #include <cassert>
 #include <iostream>
 #include <stdlib.h>
+#include <ucontext.h>
 
 namespace fiber {
 
-// 静态成员初始化
 thread_local Fiber* Fiber::current_fiber_ = nullptr;
-Fiber::ptr Fiber::main_fiber_ = nullptr;
 std::atomic<uint64_t> fiber_id_counter{0};
 
-// 生成协程ID
 uint64_t Fiber::generateId() {
     return ++fiber_id_counter;
 }
 
-// 构造函数
 Fiber::Fiber(FiberFunction func) 
     : id_(generateId()), 
       state_(FiberState::READY),
-      func_(std::move(func)) {
+      func_(std::move(func)),
+      run_mode_(RunMode::MANUAL) {
       
-    // 为主协程特殊处理
     if (!func_) {
         current_fiber_ = this;
         state_ = FiberState::RUNNING;
-        // 主协程也需要上下文用于切换
         context_.reset(ContextFactory::createContext());
         return;
     }
     
-    // 创建上下文
     context_.reset(ContextFactory::createContext());
-    
-    // 初始化上下文
     context_->initialize(&Fiber::fiberEntry);
     
     std::cout << "Fiber created with ID: " << id_ << std::endl;
 }
 
-// 析构函数
 Fiber::~Fiber() {
-    // Context会自动释放栈空间
     std::cout << "Fiber destroyed with ID: " << id_ << std::endl;
 }
 
-// 恢复协程执行
 void Fiber::resume() {
     assert(state_ != FiberState::DONE && "Cannot resume a finished fiber");
     assert(context_ && "Fiber context is null");
@@ -57,81 +48,83 @@ void Fiber::resume() {
         
         std::cout << "Resuming fiber " << id_ << std::endl;
         
-        // 从当前协程切换到目标协程
         if (old_fiber && old_fiber->context_) {
-            // 设置目标协程为当前协程并切换
             current_fiber_ = this;
             state_ = FiberState::RUNNING;
             old_fiber->context_->switchTo(context_.get());
         } else {
-            // 开发阶段：如果没有 old_fiber，说明调用逻辑有问题
-            assert(false && "No valid old fiber context for switching");
+            // 通过调度器获取main_fiber
+            auto main_fiber = Scheduler::GetMainFiber();
+            current_fiber_ = this;
+            state_ = FiberState::RUNNING;
+            main_fiber->context_->switchTo(context_.get());
         }
     }
 }
 
-// 挂起当前协程
+
+
 void Fiber::yield() {
     assert(current_fiber_ && "No current fiber");
-    assert(main_fiber_ && "No main fiber");
     
     Fiber* current = current_fiber_;
-    current->state_ = FiberState::SUSPENDED;
+    
+    // 只有在不是DONE状态时才设置为SUSPENDED
+    if (current->state_ != FiberState::DONE) {
+        current->state_ = FiberState::SUSPENDED;
+    }
     
     std::cout << "Yielding fiber " << current->id_ << std::endl;
     
-    // 切换回主协程
-    current_fiber_ = main_fiber_.get();
-    main_fiber_->state_ = FiberState::RUNNING;
-    
-    assert(main_fiber_->context_ && "Main fiber context is null");
-    assert(current->context_ && "Current fiber context is null");
-    
-    current->context_->switchTo(main_fiber_->context_.get());
+    // 通过 Scheduler 获取 main_fiber，多线程安全
+    auto main_fiber = Scheduler::GetMainFiber();
+    assert(main_fiber && "main_fiber must be not null");
+    current_fiber_ = main_fiber.get();
+    main_fiber->state_ = FiberState::RUNNING;
+    current->context_->switchTo(main_fiber->context_.get());
 }
 
-// 获取协程状态
 FiberState Fiber::getState() const {
     return state_;
 }
 
-// 获取协程ID
 uint64_t Fiber::getId() const {
     return id_;
 }
 
-// 获取当前协程
-Fiber::ptr Fiber::GetCurrentFiber() {
-    if (!main_fiber_) {
-        // 创建主协程
-        main_fiber_ = std::make_shared<Fiber>(FiberFunction{});
-    }
-    if (!current_fiber_) {
-        current_fiber_ = main_fiber_.get();
-    }
-    return std::shared_ptr<Fiber>(current_fiber_, [](Fiber*){});
-}
-
-// 挂起当前协程
-void Fiber::YieldCurrent() {
+void Fiber::YieldToScheduler() {
     yield();
 }
 
-// 协程入口函数
 void Fiber::fiberEntry() {
     assert(current_fiber_ && "No current fiber in fiberEntry");
     
-    // 执行协程函数
     if (current_fiber_->func_) {
         current_fiber_->func_();
     }
     
-    // 标记协程完成
     current_fiber_->state_ = FiberState::DONE;
     
-    // 自动yield回主协程
     std::cout << "Fiber " << current_fiber_->id_ << " finished" << std::endl;
     yield();
+}
+
+// =========================
+// Go语义接口实现
+// =========================
+
+void Fiber::go(FiberFunction func) {
+    auto fiber = std::make_shared<Fiber>(std::move(func));
+    fiber->setRunMode(RunMode::SCHEDULED);
+    
+    // 获取多线程调度器并立即调度
+    auto scheduler = Scheduler::GetOrCreateMultiThreadScheduler();
+    scheduler->scheduleImmediate(fiber);
+}
+
+int Fiber::getWorkerCount() {
+    auto scheduler = Scheduler::GetScheduler();
+    return scheduler ? scheduler->getWorkerCount() : 0;
 }
 
 } // namespace fiber

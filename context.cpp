@@ -5,9 +5,7 @@
 
 namespace fiber {
 
-// UContext实现
 UContext::UContext() : stack_(nullptr), stack_size_(DEFAULT_STACK_SIZE) {
-    // 初始化上下文
     if (getcontext(&context_) == -1) {
         throw std::runtime_error("getcontext failed");
     }
@@ -46,9 +44,7 @@ ucontext_t* UContext::getUContext() {
     return &context_;
 }
 
-// ContextFactory实现
 Context* ContextFactory::createContext() {
-    // 目前返回ucontext实现，后续可以替换为更高效的实现
     return new UContext();
 }
 

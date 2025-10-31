@@ -1,0 +1,355 @@
+#include "include/scheduler.h"
+#include "include/fiber_consumer.h"
+#include <cassert>
+#include <iostream>
+#include <algorithm>
+
+namespace fiber {
+
+thread_local Scheduler::ptr Scheduler::thread_scheduler_ = nullptr;
+
+Scheduler::Scheduler(SchedulerMode mode) 
+    : mode_(mode), state_(SchedulerState::STOPPED) {
+    std::cout << "Scheduler created (" 
+              << (mode == SchedulerMode::SINGLE_THREAD ? "single-thread" : "multi-thread") 
+              << " mode)" << std::endl;
+}
+
+Scheduler::~Scheduler() {
+    if (state_ != SchedulerState::STOPPED) {
+        stop();
+    }
+    std::cout << "Scheduler destroyed" << std::endl;
+}
+
+void Scheduler::init(int worker_count) {
+    assert(state_ == SchedulerState::STOPPED && "Scheduler already running");
+    
+    state_ = SchedulerState::RUNNING;
+    
+    if (mode_ == SchedulerMode::SINGLE_THREAD) {
+        // 单线程模式初始化
+        main_fiber_ = std::make_shared<Fiber>(Fiber::FiberFunction{});
+        std::cout << "Scheduler initialized (single-thread mode)" << std::endl;
+    } else {
+        // 多线程模式初始化
+        main_fiber_ = std::make_shared<Fiber>(Fiber::FiberFunction{});
+        startConsumers(worker_count);
+        std::cout << "Scheduler initialized (multi-thread mode, " << worker_count << " workers)" << std::endl;
+    }
+}
+
+void Scheduler::stop() {
+    if (state_ == SchedulerState::STOPPED) {
+        return;
+    }
+    
+    state_ = SchedulerState::STOPPING;
+    
+    while (hasReadyFibers()) {
+        runOnce();
+    }
+    
+    state_ = SchedulerState::STOPPED;
+    scheduler_fiber_.reset();
+    
+    std::cout << "Scheduler stopped" << std::endl;
+}
+
+// 检查是否正在运行
+bool Scheduler::isRunning() const {
+    return state_ == SchedulerState::RUNNING;
+}
+
+// 获取调度器状态
+SchedulerState Scheduler::getState() const {
+    return state_;
+}
+
+// 添加协程到调度队列
+void Scheduler::schedule(Fiber::ptr fiber) {
+    assert(fiber && "Cannot schedule null fiber");
+    assert(state_ != SchedulerState::STOPPED && "Scheduler is not running");
+    
+    ready_queue_.push(fiber);
+    all_fibers_.push_back(fiber);
+    
+    std::cout << "Scheduled fiber " << fiber->getId() << std::endl;
+}
+
+// 直接添加函数到调度队列
+void Scheduler::schedule(Fiber::FiberFunction func) {
+    auto fiber = std::make_shared<Fiber>(std::move(func));
+    schedule(fiber);
+}
+
+// 运行调度器（阻塞直到所有协程完成）
+void Scheduler::start() {
+    assert(state_ == SchedulerState::RUNNING && "Scheduler is not running");
+    
+    std::cout << "Scheduler started" << std::endl;
+    
+    while (hasReadyFibers() && state_ == SchedulerState::RUNNING) {
+        runOnce();
+        cleanup_finished_fibers();
+    }
+    
+    std::cout << "Scheduler finished" << std::endl;
+}
+
+// 执行一轮调度
+void Scheduler::runOnce() {
+    if (!hasReadyFibers()) {
+        return;
+    }
+    
+    Fiber::ptr fiber = next_ready_fiber();
+    if (!fiber) {
+        return;
+    }
+    
+    current_fiber_ = fiber;
+    
+    std::cout << "Scheduler running fiber " << fiber->getId() << std::endl;
+    
+    // 执行协程
+    fiber->resume();
+    
+    // 执行完成后检查状态
+    if (fiber->getState() == FiberState::DONE) {
+        std::cout << "Fiber " << fiber->getId() << " completed" << std::endl;
+        // 完成的fiber不需要重新加入队列
+    } else if (fiber->getState() == FiberState::SUSPENDED) {
+        // 如果协程挂起，重新加入就绪队列
+        ready_queue_.push(fiber);
+        std::cout << "Fiber " << fiber->getId() << " yielded, re-queued" << std::endl;
+    }
+    
+    current_fiber_.reset();
+}
+
+// 检查是否有就绪的协程
+bool Scheduler::hasReadyFibers() const {
+    return !ready_queue_.empty();
+}
+
+// 获取当前协程数量
+size_t Scheduler::getFiberCount() const {
+    return all_fibers_.size();
+}
+
+// 获取就绪协程数量
+size_t Scheduler::getReadyFiberCount() const {
+    return ready_queue_.size();
+}
+
+// 获取当前线程的调度器
+Scheduler::ptr Scheduler::GetScheduler() {
+    return thread_scheduler_;
+}
+
+// 设置当前线程的调度器
+void Scheduler::SetScheduler(Scheduler::ptr scheduler) {
+    thread_scheduler_ = scheduler;
+}
+
+
+
+// 清理已完成的协程
+void Scheduler::cleanup_finished_fibers() {
+    auto it = std::remove_if(all_fibers_.begin(), all_fibers_.end(),
+        [](const Fiber::ptr& fiber) {
+            return fiber->getState() == FiberState::DONE;
+        });
+    
+    if (it != all_fibers_.end()) {
+        size_t removed = std::distance(it, all_fibers_.end());
+        all_fibers_.erase(it, all_fibers_.end());
+        std::cout << "Cleaned up " << removed << " finished fibers" << std::endl;
+    }
+}
+
+// 获取下一个就绪协程 (FIFO)
+Fiber::ptr Scheduler::next_ready_fiber() {
+    if (ready_queue_.empty()) {
+        return nullptr;
+    }
+    
+    Fiber::ptr fiber = ready_queue_.front();
+    ready_queue_.pop();
+    return fiber;
+}
+
+
+
+Scheduler::ptr Scheduler::GetOrCreateScheduler(SchedulerMode mode) {
+    if (!thread_scheduler_) {
+        thread_scheduler_ = std::make_shared<Scheduler>(mode);
+        thread_scheduler_->init(mode == SchedulerMode::MULTI_THREAD ? std::thread::hardware_concurrency() : 1);
+    }
+    return thread_scheduler_;
+}
+
+Scheduler::ptr Scheduler::GetOrCreateMultiThreadScheduler() {
+    return GetOrCreateScheduler(SchedulerMode::MULTI_THREAD);
+}
+
+void Scheduler::AutoStart() {
+    if (scheduling_in_progress_) {
+        return;  // 防止重入
+    }
+    
+    auto scheduler = GetOrCreateScheduler();
+    if (!scheduler->auto_started_ && scheduler->hasReadyFibers()) {
+        scheduler->auto_started_ = true;
+        scheduling_in_progress_ = true;
+        
+        std::cout << "Auto-starting scheduler execution..." << std::endl;
+        scheduler->start();
+        
+        scheduling_in_progress_ = false;
+        scheduler->auto_started_ = false;  // 重置，允许后续再次自动启动
+    }
+}
+
+Fiber::ptr Scheduler::GetMainFiber() {
+    auto scheduler = GetOrCreateScheduler();  // 确保调度器存在
+    return scheduler->main_fiber_;
+}
+
+// === 多线程调度专用方法 ===
+
+void Scheduler::scheduleImmediate(Fiber::ptr fiber) {
+    if (mode_ == SchedulerMode::SINGLE_THREAD) {
+        // 单线程模式：使用原有调度
+        schedule(fiber);
+        AutoStart();
+    } else {
+        // 多线程模式：立即分配给工作线程
+        WorkerThread* worker = selectWorker();
+        if (worker) {
+            worker->schedule(fiber);
+        } else {
+            // fallback到全局队列
+            std::lock_guard<std::mutex> lock(global_mutex_);
+            global_queue_.push(fiber);
+            global_cv_.notify_one();
+        }
+    }
+}
+
+int Scheduler::getWorkerCount() const {
+    return static_cast<int>(workers_.size());
+}
+
+WorkerThread* Scheduler::selectWorker() {
+    if (workers_.empty()) {
+        return nullptr;
+    }
+    
+    // 负载均衡：选择队列最少的工作线程
+    WorkerThread* best = workers_[0].get();
+    size_t min_size = best->getQueueSize();
+    
+    for (auto& worker : workers_) {
+        size_t size = worker->getQueueSize();
+        if (size < min_size) {
+            min_size = size;
+            best = worker.get();
+        }
+    }
+    
+    return best;
+}
+
+void Scheduler::startWorkers(int count) {
+    workers_.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        auto worker = std::make_unique<WorkerThread>(i, this);
+        worker->start();
+        workers_.push_back(std::move(worker));
+    }
+}
+
+void Scheduler::stopWorkers() {
+    for (auto& worker : workers_) {
+        worker->stop();
+    }
+    workers_.clear();
+}
+
+// === WorkerThread 实现 ===
+
+WorkerThread::WorkerThread(int id, Scheduler* scheduler) 
+    : id_(id), scheduler_(scheduler) {
+}
+
+WorkerThread::~WorkerThread() {
+    stop();
+}
+
+void WorkerThread::start() {
+    if (running_.load()) {
+        return;
+    }
+    
+    running_.store(true);
+    thread_ = std::thread(&WorkerThread::workerLoop, this);
+}
+
+void WorkerThread::stop() {
+    if (!running_.load()) {
+        return;
+    }
+    
+    running_.store(false);
+    local_cv_.notify_all();
+    
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+}
+
+void WorkerThread::schedule(Fiber::ptr fiber) {
+    {
+        std::lock_guard<std::mutex> lock(local_mutex_);
+        local_queue_.push(fiber);
+    }
+    local_cv_.notify_one();
+}
+
+size_t WorkerThread::getQueueSize() const {
+    std::lock_guard<std::mutex> lock(local_mutex_);
+    return local_queue_.size();
+}
+
+void WorkerThread::workerLoop() {
+    while (running_.load()) {
+        Fiber::ptr fiber = nullptr;
+        
+        // 从本地队列获取fiber
+        {
+            std::unique_lock<std::mutex> lock(local_mutex_);
+            if (!local_queue_.empty()) {
+                fiber = local_queue_.front();
+                local_queue_.pop();
+            } else {
+                // 等待新工作
+                local_cv_.wait_for(lock, std::chrono::milliseconds(10));
+                continue;
+            }
+        }
+        
+        // 执行fiber
+        if (fiber) {
+            fiber->resume();
+            
+            // 如果fiber yield了，重新调度
+            if (fiber->getState() == FiberState::SUSPENDED) {
+                schedule(fiber);
+            }
+        }
+    }
+}
+
+} // namespace fiber

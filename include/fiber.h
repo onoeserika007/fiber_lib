@@ -4,11 +4,13 @@
 #include <stdint.h>
 #include <functional>
 #include <memory>
+#include <thread>
+#include <chrono>
 
 namespace fiber {
 
-// 前向声明
 class Context;
+class Scheduler;
 
 enum class FiberState {
     READY,
@@ -21,58 +23,88 @@ class Fiber {
 public:
     using ptr = std::shared_ptr<Fiber>;
     using FiberFunction = std::function<void()>;
-
-    // 构造函数
-    explicit Fiber(FiberFunction func);
     
-    // 析构函数
+    enum class RunMode {
+        MANUAL,      // Lua语义：手动控制
+        SCHEDULED    // Go语义：调度器管理  
+    };
+
+    explicit Fiber(FiberFunction func);
     ~Fiber();
     
-    // 禁止拷贝
     Fiber(const Fiber&) = delete;
     Fiber& operator=(const Fiber&) = delete;
-    
-    // 允许移动
     Fiber(Fiber&&) = default;
     Fiber& operator=(Fiber&&) = default;
     
-    // 协程操作接口
     void resume();
     static void yield();
     
-    // 获取协程状态
     FiberState getState() const;
-    
-    // 获取协程ID
     uint64_t getId() const;
+    
+    // RunMode管理
+    void setRunMode(RunMode mode) { run_mode_ = mode; }
+    RunMode getRunMode() const { return run_mode_; }
 
-    // 静态方法
-    static Fiber::ptr GetCurrentFiber();
-    static void YieldCurrent();
-
-    // 协程入口函数
+    static void YieldToScheduler();
     static void fiberEntry();
+    
+    // =========================
+    // Lua语义接口 (手动控制)
+    // =========================
+    
+    /**
+     * 创建fiber但不启动 (Lua语义)
+     * @param func 要执行的函数
+     * @return fiber指针
+     */
+    static Fiber::ptr create(FiberFunction func) {
+        auto fiber = std::make_shared<Fiber>(std::move(func));
+        fiber->setRunMode(RunMode::MANUAL);
+        return fiber;
+    }
+    
+    /**
+     * 检查fiber是否已完成
+     * @param fiber 要检查的fiber
+     * @return true表示已完成
+     */
+    static bool isDone(Fiber::ptr fiber) {
+        return fiber->getState() == FiberState::DONE;
+    }
+    
+    // =========================  
+    // Go语义接口 (自动调度)
+    // =========================
+    
+    /**
+     * 创建并立即执行goroutine (Go语义)
+     * 立即在多线程中开始执行
+     * @param func 要执行的函数
+     */
+    static void go(FiberFunction func);
+    
+    /**
+     * 等待协程完成（给正在执行的协程一些时间）
+     */
+    static void waitAll() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    
+    /**
+     * 获取工作线程数量
+     */
+    static int getWorkerCount();
 
 private:
-    // 协程ID
     uint64_t id_;
-    
-    // 协程状态
     FiberState state_;
-    
-    // 协程执行函数
     FiberFunction func_;
-    
-    // 协程上下文
     std::unique_ptr<Context> context_;
+    RunMode run_mode_;
     
-    // 初始化ID生成器
     static uint64_t generateId();
-    
-    // 主协程
-    static Fiber::ptr main_fiber_;
-    
-    // 当前运行的协程
     static thread_local Fiber* current_fiber_;
 };
 
