@@ -19,8 +19,10 @@ enum class FiberState {
     DONE
 };
 
-class Fiber {
+// must be public inheritance
+class Fiber : public std::enable_shared_from_this<Fiber> {
 public:
+    friend class Scheduler;
     using ptr = std::shared_ptr<Fiber>;
     using FiberFunction = std::function<void()>;
     
@@ -28,27 +30,12 @@ public:
         MANUAL,      // Lua语义：手动控制
         SCHEDULED    // Go语义：调度器管理  
     };
-
-    explicit Fiber(FiberFunction func);
-    ~Fiber();
-    
-    Fiber(const Fiber&) = delete;
-    Fiber& operator=(const Fiber&) = delete;
-    Fiber(Fiber&&) = default;
-    Fiber& operator=(Fiber&&) = default;
     
     void resume();
     static void yield();
     
     FiberState getState() const;
     uint64_t getId() const;
-    
-    // RunMode管理
-    void setRunMode(RunMode mode) { run_mode_ = mode; }
-    RunMode getRunMode() const { return run_mode_; }
-
-    static void YieldToScheduler();
-    static void fiberEntry();
     
     // =========================
     // Lua语义接口 (手动控制)
@@ -60,7 +47,8 @@ public:
      * @return fiber指针
      */
     static Fiber::ptr create(FiberFunction func) {
-        auto fiber = std::make_shared<Fiber>(std::move(func));
+        auto fiber = std::shared_ptr<Fiber>(new Fiber(std::move(func)));
+        fiber->Init();
         fiber->setRunMode(RunMode::MANUAL);
         return fiber;
     }
@@ -70,8 +58,8 @@ public:
      * @param fiber 要检查的fiber
      * @return true表示已完成
      */
-    static bool isDone(Fiber::ptr fiber) {
-        return fiber->getState() == FiberState::DONE;
+    bool isDone() const {
+        return getState() == FiberState::DONE;
     }
     
     // =========================  
@@ -96,8 +84,37 @@ public:
      * 获取工作线程数量
      */
     static int getWorkerCount();
+    
+    /**
+     * @brief 获取当前协程的shared_ptr（用于WaitQueue等同步机制）
+     * @return 当前协程的shared_ptr，如果不在协程中则返回nullptr
+     */
+    static ptr GetCurrentFiberPtr();
+    
+    /**
+     * @brief 设置当前协程的weak_ptr（供调度器调用）
+     * @param fiber 当前协程的shared_ptr
+     */
+    static void SetCurrentFiberPtr(const ptr& fiber);
+
+    ~Fiber();
 
 private:
+    explicit Fiber(FiberFunction func);
+
+    Fiber(const Fiber&) = delete;
+    Fiber& operator=(const Fiber&) = delete;
+    Fiber(Fiber&&) = default;
+    Fiber& operator=(Fiber&&) = default;
+
+    void Init();
+
+    static void fiberEntry();
+
+    // RunMode管理
+    void setRunMode(RunMode mode) { run_mode_ = mode; }
+    RunMode getRunMode() const { return run_mode_; }
+
     uint64_t id_;
     FiberState state_;
     FiberFunction func_;
@@ -106,6 +123,7 @@ private:
     
     static uint64_t generateId();
     static thread_local Fiber* current_fiber_;
+    static thread_local std::weak_ptr<Fiber> current_fiber_weak_;
 };
 
 } // namespace fiber

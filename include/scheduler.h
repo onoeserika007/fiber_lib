@@ -28,8 +28,7 @@ class FiberConsumer;
 class Scheduler {
 public:
     using ptr = std::shared_ptr<Scheduler>;
-    
-    Scheduler(SchedulerMode mode = SchedulerMode::SINGLE_THREAD);
+
     ~Scheduler();
     
     Scheduler(const Scheduler&) = delete;
@@ -44,14 +43,8 @@ public:
     SchedulerMode getMode() const { return mode_; }
     
     void schedule(Fiber::ptr fiber);
-    void start();
     void runOnce();
     bool hasReadyFibers() const;
-    
-    static Scheduler::ptr GetScheduler();
-    static Scheduler::ptr GetOrCreateScheduler(SchedulerMode mode = SchedulerMode::SINGLE_THREAD);
-    static Scheduler::ptr GetOrCreateMultiThreadScheduler();  // 获取多线程调度器
-    static void SetScheduler(Scheduler::ptr scheduler);
     
     static Fiber::ptr GetMainFiber();
     
@@ -67,7 +60,6 @@ private:
     std::queue<Fiber::ptr> ready_queue_;
     std::vector<Fiber::ptr> all_fibers_;
     Fiber::ptr scheduler_fiber_;
-    Fiber::ptr current_fiber_;
     Fiber::ptr main_fiber_;
     
     // 多线程模式成员
@@ -86,6 +78,14 @@ private:
     FiberConsumer* selectConsumer();
     void startConsumers(int count);
     void stopConsumers();
+
+    void start();
+
+    Scheduler(SchedulerMode mode = SchedulerMode::SINGLE_THREAD);
+    static Scheduler::ptr GetScheduler();
+    static Scheduler::ptr GetOrCreateScheduler(SchedulerMode mode = SchedulerMode::SINGLE_THREAD);
+    static Scheduler::ptr GetOrCreateMultiThreadScheduler();  // 获取多线程调度器
+    static void SetScheduler(Scheduler::ptr scheduler);
 };
 
 } // namespace fiber

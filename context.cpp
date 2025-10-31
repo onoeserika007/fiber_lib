@@ -20,7 +20,6 @@ UContext::~UContext() {
 
 void UContext::switchTo(Context* to) {
     if (UContext* uctx = dynamic_cast<UContext*>(to)) {
-        LOG_DEBUG("Switching context (ucontext implementation)");
         if (swapcontext(&context_, &uctx->context_) == -1) {
             throw std::runtime_error("swapcontext failed");
         }

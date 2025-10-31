@@ -29,11 +29,11 @@ void Scheduler::init(int worker_count) {
     
     if (mode_ == SchedulerMode::SINGLE_THREAD) {
         // 单线程模式：仅创建main_fiber_供Lua语义使用
-        main_fiber_ = std::make_shared<Fiber>(Fiber::FiberFunction{});
+        main_fiber_ = Fiber::create(Fiber::FiberFunction{});
         LOG_DEBUG("Scheduler initialized (single-thread mode)");
     } else {
         // 多线程模式：创建fiber消费者
-        main_fiber_ = std::make_shared<Fiber>(Fiber::FiberFunction{});
+        main_fiber_ = Fiber::create(Fiber::FiberFunction{});
         startConsumers(worker_count);
         LOG_DEBUG("Scheduler initialized (multi-thread mode, {} workers)", worker_count);
     }
@@ -71,7 +71,6 @@ void Scheduler::schedule(Fiber::ptr fiber) {
     if (mode_ == SchedulerMode::SINGLE_THREAD) {
         ready_queue_.push(fiber);
         all_fibers_.push_back(fiber);
-        LOG_DEBUG("Scheduled fiber {}", fiber->getId());
     } else {
         // 多线程模式下不应该调用这个方法
         // Go语义应该使用scheduleImmediate
@@ -96,17 +95,12 @@ void Scheduler::runOnce() {
     
     auto fiber = next_ready_fiber();
     if (fiber) {
-        current_fiber_ = fiber;
-        LOG_DEBUG("Scheduler running fiber {}", fiber->getId());
         fiber->resume();
-        current_fiber_ = nullptr;
         
         if (fiber->getState() == FiberState::DONE) {
-            LOG_DEBUG("Fiber {} completed", fiber->getId());
         } else {
             // Fiber yielded，重新加入队列
             ready_queue_.push(fiber);
-            LOG_DEBUG("Fiber {} yielded, re-queued", fiber->getId());
         }
         
         cleanup_finished_fibers();
