@@ -1,6 +1,7 @@
 #include "fiber.h"
 #include "context.h"
 #include "scheduler.h"
+#include "logger.h"
 #include <atomic>
 #include <cassert>
 #include <iostream>
@@ -32,11 +33,11 @@ Fiber::Fiber(FiberFunction func)
     context_.reset(ContextFactory::createContext());
     context_->initialize(&Fiber::fiberEntry);
     
-    std::cout << "Fiber created with ID: " << id_ << std::endl;
+    LOG_DEBUG("Fiber created with ID: {}", id_);
 }
 
 Fiber::~Fiber() {
-    std::cout << "Fiber destroyed with ID: " << id_ << std::endl;
+    LOG_DEBUG("Fiber destroyed with ID: {}", id_);
 }
 
 void Fiber::resume() {
@@ -46,7 +47,7 @@ void Fiber::resume() {
     if (state_ == FiberState::READY || state_ == FiberState::SUSPENDED) {
         Fiber* old_fiber = current_fiber_;
         
-        std::cout << "Resuming fiber " << id_ << std::endl;
+        LOG_DEBUG("Resuming fiber {}", id_);
         
         if (old_fiber && old_fiber->context_) {
             current_fiber_ = this;
@@ -74,7 +75,7 @@ void Fiber::yield() {
         current->state_ = FiberState::SUSPENDED;
     }
     
-    std::cout << "Yielding fiber " << current->id_ << std::endl;
+    LOG_DEBUG("Yielding fiber {}", current->id_);
     
     // 通过 Scheduler 获取 main_fiber，多线程安全
     auto main_fiber = Scheduler::GetMainFiber();
@@ -105,7 +106,7 @@ void Fiber::fiberEntry() {
     
     current_fiber_->state_ = FiberState::DONE;
     
-    std::cout << "Fiber " << current_fiber_->id_ << " finished" << std::endl;
+    LOG_DEBUG("Fiber {} finished", current_fiber_->id_);
     yield();
 }
 

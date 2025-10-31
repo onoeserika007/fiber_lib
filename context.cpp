@@ -1,4 +1,5 @@
 #include "context.h"
+#include "logger.h"
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -19,7 +20,7 @@ UContext::~UContext() {
 
 void UContext::switchTo(Context* to) {
     if (UContext* uctx = dynamic_cast<UContext*>(to)) {
-        std::cout << "Switching context (ucontext implementation)" << std::endl;
+        LOG_DEBUG("Switching context (ucontext implementation)");
         if (swapcontext(&context_, &uctx->context_) == -1) {
             throw std::runtime_error("swapcontext failed");
         }

@@ -1,5 +1,6 @@
 #include "fiber_consumer.h"
 #include "scheduler.h"
+#include "logger.h"
 #include <iostream>
 
 namespace fiber {
@@ -53,13 +54,13 @@ size_t FiberConsumer::getQueueSize() const {
 }
 
 void FiberConsumer::consumerLoop() {
-    std::cout << "FiberConsumer " << id_ << " started" << std::endl;
+    LOG_DEBUG("FiberConsumer {} started", id_);
     
     while (running_.load()) {
         processTask();
     }
     
-    std::cout << "FiberConsumer " << id_ << " stopped" << std::endl;
+    LOG_DEBUG("FiberConsumer {} stopped", id_);
 }
 
 void FiberConsumer::processTask() {

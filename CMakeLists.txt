@@ -8,5 +8,8 @@ aux_source_directory(${SRC_DIR} SRC_LIST)
 find_package(Threads REQUIRED)
 
 add_library(fiber_lib ${SRC_LIST})
-target_link_libraries(fiber_lib -ldl Threads::Threads)
-target_include_directories(fiber_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(fiber_lib -ldl Threads::Threads base_lib)
+target_include_directories(fiber_lib PUBLIC 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/third_party/basic_libs/include
+)

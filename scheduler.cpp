@@ -1,5 +1,6 @@
 #include "scheduler.h"
 #include "fiber_consumer.h"
+#include "logger.h"
 #include <cassert>
 #include <iostream>
 #include <algorithm>
@@ -10,16 +11,15 @@ thread_local Scheduler::ptr Scheduler::thread_scheduler_ = nullptr;
 
 Scheduler::Scheduler(SchedulerMode mode) 
     : mode_(mode), state_(SchedulerState::STOPPED) {
-    std::cout << "Scheduler created (" 
-              << (mode == SchedulerMode::SINGLE_THREAD ? "single-thread" : "multi-thread") 
-              << " mode)" << std::endl;
+    LOG_DEBUG("Scheduler created ({} mode)", 
+              (mode == SchedulerMode::SINGLE_THREAD ? "single-thread" : "multi-thread"));
 }
 
 Scheduler::~Scheduler() {
     if (state_ != SchedulerState::STOPPED) {
         stop();
     }
-    std::cout << "Scheduler destroyed" << std::endl;
+    LOG_DEBUG("Scheduler destroyed");
 }
 
 void Scheduler::init(int worker_count) {
@@ -30,12 +30,12 @@ void Scheduler::init(int worker_count) {
     if (mode_ == SchedulerMode::SINGLE_THREAD) {
         // 单线程模式：仅创建main_fiber_供Lua语义使用
         main_fiber_ = std::make_shared<Fiber>(Fiber::FiberFunction{});
-        std::cout << "Scheduler initialized (single-thread mode)" << std::endl;
+        LOG_DEBUG("Scheduler initialized (single-thread mode)");
     } else {
         // 多线程模式：创建fiber消费者
         main_fiber_ = std::make_shared<Fiber>(Fiber::FiberFunction{});
         startConsumers(worker_count);
-        std::cout << "Scheduler initialized (multi-thread mode, " << worker_count << " workers)" << std::endl;
+        LOG_DEBUG("Scheduler initialized (multi-thread mode, {} workers)", worker_count);
     }
 }
 
@@ -56,7 +56,7 @@ void Scheduler::stop() {
     }
     
     state_ = SchedulerState::STOPPED;
-    std::cout << "Scheduler stopped" << std::endl;
+    LOG_DEBUG("Scheduler stopped");
 }
 
 bool Scheduler::isRunning() const {
@@ -71,7 +71,7 @@ void Scheduler::schedule(Fiber::ptr fiber) {
     if (mode_ == SchedulerMode::SINGLE_THREAD) {
         ready_queue_.push(fiber);
         all_fibers_.push_back(fiber);
-        std::cout << "Scheduled fiber " << fiber->getId() << std::endl;
+        LOG_DEBUG("Scheduled fiber {}", fiber->getId());
     } else {
         // 多线程模式下不应该调用这个方法
         // Go语义应该使用scheduleImmediate
@@ -82,11 +82,11 @@ void Scheduler::schedule(Fiber::ptr fiber) {
 void Scheduler::start() {
     assert(mode_ == SchedulerMode::SINGLE_THREAD && "start() only for single-thread mode");
     
-    std::cout << "Scheduler started" << std::endl;
+    LOG_DEBUG("Scheduler started");
     while (hasReadyFibers()) {
         runOnce();
     }
-    std::cout << "Scheduler finished" << std::endl;
+    LOG_DEBUG("Scheduler finished");
 }
 
 void Scheduler::runOnce() {
@@ -97,16 +97,16 @@ void Scheduler::runOnce() {
     auto fiber = next_ready_fiber();
     if (fiber) {
         current_fiber_ = fiber;
-        std::cout << "Scheduler running fiber " << fiber->getId() << std::endl;
+        LOG_DEBUG("Scheduler running fiber {}", fiber->getId());
         fiber->resume();
         current_fiber_ = nullptr;
         
         if (fiber->getState() == FiberState::DONE) {
-            std::cout << "Fiber " << fiber->getId() << " completed" << std::endl;
+            LOG_DEBUG("Fiber {} completed", fiber->getId());
         } else {
             // Fiber yielded，重新加入队列
             ready_queue_.push(fiber);
-            std::cout << "Fiber " << fiber->getId() << " yielded, re-queued" << std::endl;
+            LOG_DEBUG("Fiber {} yielded, re-queued", fiber->getId());
         }
         
         cleanup_finished_fibers();
@@ -172,7 +172,7 @@ void Scheduler::cleanup_finished_fibers() {
     all_fibers_.erase(it, all_fibers_.end());
     
     if (removed > 0) {
-        std::cout << "Cleaned up " << removed << " finished fibers" << std::endl;
+        LOG_DEBUG("Cleaned up {} finished fibers", removed);
     }
 }
 
