@@ -61,14 +61,13 @@ public:
      * @brief 检查是否为空（非线程安全，仅用于调试）
      */
     bool empty() const;
+    
+    void push_back_lockfree(Fiber::ptr fiber);
 
 private:
     // 使用无锁链表实现等待队列
     alignas(64) std::atomic<WaitNode*> head_;
     alignas(64) std::atomic<WaitNode*> tail_;
-    
-    // 向队列尾部添加节点
-    void push_back_lockfree(Fiber::ptr fiber);
     
     // 从队列头部取出节点
     Fiber::ptr pop_front_lockfree();

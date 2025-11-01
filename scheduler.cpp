@@ -1,6 +1,7 @@
 #include "scheduler.h"
 #include "fiber_consumer.h"
 #include "timer.h"
+#include "io_manager.h"
 #include "logger.h"
 #include <cassert>
 #include <iostream>
@@ -33,17 +34,20 @@ void Scheduler::init(int worker_count) {
 
 void Scheduler::run() {
     auto& timer_wheel = TimerWheel::getInstance();
+    auto& io_manager = IOManager::getInstance();
     uint64_t tick_interval_ms = timer_wheel.getTickInterval();
     
+    io_manager.init();
     LOG_DEBUG("Scheduler event loop started (tick interval: {}ms)", tick_interval_ms);
     
     while (state_ == SchedulerState::RUNNING) {
+        // epoll 正好取代 sleep
+        io_manager.processEvents(static_cast<int>(tick_interval_ms));
         timer_wheel.tick();
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(tick_interval_ms));
     }
 
     LOG_DEBUG("Scheduler stopping");
+    io_manager.shutdown();
     timer_wheel.stop();
     stopConsumers();
     state_ = SchedulerState::STOPPED;
