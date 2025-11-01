@@ -1,6 +1,7 @@
 #include "fiber.h"
 #include "context.h"
 #include "scheduler.h"
+#include "timer.h"
 #include "logger.h"
 #include <atomic>
 #include <cassert>
@@ -157,6 +158,29 @@ void Fiber::go(FiberFunction func) {
 int Fiber::getWorkerCount() {
     auto&& scheduler = Scheduler::GetScheduler();
     return scheduler.getWorkerCount();
+}
+
+void Fiber::sleep(uint64_t ms) {
+    if (ms == 0) {
+        // 0毫秒，直接返回，不做任何操作
+        return;
+    }
+
+    auto current = GetCurrentFiberPtr();
+    if (!current) {
+        // 不在协程中，使用std::this_thread::sleep_for
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        return;
+    }
+
+    auto& timer_wheel = TimerWheel::getInstance();
+    timer_wheel.addTimer(ms, [current]() {
+        // 定时器到期，重新调度该协程
+        auto&& scheduler = Scheduler::GetScheduler();
+        scheduler.scheduleImmediate(current);
+    }, false);
+
+    Fiber::block_yield();
 }
 
 Fiber::ptr Fiber::GetCurrentFiberPtr() {

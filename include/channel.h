@@ -5,6 +5,7 @@
 #include <atomic>
 #include <vector>
 #include "fiber.h"
+#include "timer.h"
 #include "wait_queue.h"
 
 namespace fiber {
@@ -35,6 +36,13 @@ public:
     // 非阻塞发送和接收  
     bool try_send(T value);
     bool try_recv(T& value);
+    
+    // 带超时的发送和接收
+    template<typename Rep, typename Period>
+    bool send_timeout(T value, const std::chrono::duration<Rep, Period>& timeout);
+    
+    template<typename Rep, typename Period>
+    bool recv_timeout(T& value, const std::chrono::duration<Rep, Period>& timeout);
     
     // Channel管理
     void close();
@@ -250,6 +258,145 @@ bool Channel<T>::try_pop_lockfree(T& value) {
     }
     
     return false;
+}
+
+// ==================== 超时方法实现 ====================
+
+#include "timer.h"
+#include "scheduler.h"
+
+template<typename T>
+template<typename Rep, typename Period>
+bool Channel<T>::send_timeout(T value, const std::chrono::duration<Rep, Period>& timeout) {
+    // 先尝试非阻塞发送
+    if (try_push_lockfree(std::move(value))) {
+        recv_waiters_->notify_one();
+        return true;
+    }
+    
+    // 检查是否已关闭
+    if (state_.load(std::memory_order_acquire) == State::CLOSED) {
+        return false;
+    }
+    
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout);
+    if (ms.count() <= 0) {
+        return false;  // 超时时间为0或负数
+    }
+    
+    // 获取当前协程
+    auto current_fiber = Fiber::GetCurrentFiberPtr();
+    if (!current_fiber) {
+        throw std::runtime_error("send_timeout must be called from within a fiber");
+    }
+    
+    // 创建超时状态
+    auto timeout_state = std::make_shared<std::atomic<bool>>(false);
+    auto woken_state = std::make_shared<std::atomic<bool>>(false);
+    
+    // 添加定时器 - 通过waitqueue唤醒而不是直接调度
+    auto& timer_wheel = TimerWheel::getInstance();
+    auto timer = timer_wheel.addTimer(static_cast<uint64_t>(ms.count()),
+        [timeout_state, woken_state, waiters = send_waiters_.get()]() {
+            timeout_state->store(true, std::memory_order_release);
+            if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
+                // 通过waitqueue唤醒
+                waiters->notify_one();
+            }
+        }, false);
+    
+    // 进入等待循环
+    while (true) {
+        send_waiters_->wait();
+        
+        // 检查是否超时
+        if (timeout_state->load(std::memory_order_acquire)) {
+            return false;
+        }
+        
+        // 检查是否已关闭
+        if (state_.load(std::memory_order_acquire) == State::CLOSED) {
+            timer_wheel.cancel(timer);
+            return false;
+        }
+        
+        // 尝试发送
+        if (try_push_lockfree(std::move(value))) {
+            // 成功了，取消定时器
+            if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
+                timer_wheel.cancel(timer);
+            }
+            recv_waiters_->notify_one();
+            return true;
+        }
+    }
+}
+
+template<typename T>
+template<typename Rep, typename Period>
+bool Channel<T>::recv_timeout(T& value, const std::chrono::duration<Rep, Period>& timeout) {
+    // 先尝试非阻塞接收
+    if (try_pop_lockfree(value)) {
+        send_waiters_->notify_one();
+        return true;
+    }
+    
+    // 检查是否已关闭且为空
+    if (state_.load(std::memory_order_acquire) == State::CLOSED && is_empty_lockfree()) {
+        return false;
+    }
+    
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout);
+    if (ms.count() <= 0) {
+        return false;  // 超时时间为0或负数
+    }
+    
+    // 获取当前协程
+    auto current_fiber = Fiber::GetCurrentFiberPtr();
+    if (!current_fiber) {
+        throw std::runtime_error("recv_timeout must be called from within a fiber");
+    }
+    
+    // 创建超时状态
+    auto timeout_state = std::make_shared<std::atomic<bool>>(false);
+    auto woken_state = std::make_shared<std::atomic<bool>>(false);
+    
+    // 添加定时器 - 通过waitqueue唤醒而不是直接调度
+    auto& timer_wheel = TimerWheel::getInstance();
+    auto timer = timer_wheel.addTimer(static_cast<uint64_t>(ms.count()),
+        [timeout_state, woken_state, waiters = recv_waiters_.get()]() {
+            timeout_state->store(true, std::memory_order_release);
+            if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
+                // 通过waitqueue唤醒
+                waiters->notify_one();
+            }
+        }, false);
+    
+    // 进入等待循环
+    while (true) {
+        recv_waiters_->wait();
+        
+        // 检查是否超时
+        if (timeout_state->load(std::memory_order_acquire)) {
+            return false;
+        }
+        
+        // 尝试接收
+        if (try_pop_lockfree(value)) {
+            // 成功了，取消定时器
+            if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
+                timer_wheel.cancel(timer);
+            }
+            send_waiters_->notify_one();
+            return true;
+        }
+        
+        // 检查是否已关闭且为空
+        if (state_.load(std::memory_order_acquire) == State::CLOSED && is_empty_lockfree()) {
+            timer_wheel.cancel(timer);
+            return false;
+        }
+    }
 }
 
 // 便利函数

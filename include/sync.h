@@ -104,14 +104,32 @@ public:
     }
     
     /**
-     * @brief 带超时的条件等待（为迭代5预留）
+     * @brief 带超时的条件等待
+     * @param lock 持有的锁
+     * @param timeout 超时时长
+     * @return true表示被notify唤醒，false表示超时
      */
     template<typename Rep, typename Period>
     bool wait_for(std::unique_lock<FiberMutex>& lock, 
-                  const std::chrono::duration<Rep, Period>& timeout) {
-        // 为迭代5预留的超时实现
-        wait(lock);
-        return true; // 暂时总是返回true
+                  const std::chrono::duration<Rep, Period>& timeout);
+    
+    /**
+     * @brief 带超时和谓词的条件等待
+     * @param lock 持有的锁
+     * @param timeout 超时时长
+     * @param predicate 谓词函数
+     * @return true表示谓词满足，false表示超时
+     */
+    template<typename Rep, typename Period, typename Predicate>
+    bool wait_for(std::unique_lock<FiberMutex>& lock,
+                  const std::chrono::duration<Rep, Period>& timeout,
+                  Predicate predicate) {
+        while (!predicate()) {
+            if (!wait_for(lock, timeout)) {
+                return predicate();  // 超时后最后检查一次
+            }
+        }
+        return true;
     }
     
     /**

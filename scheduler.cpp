@@ -1,9 +1,11 @@
 #include "scheduler.h"
 #include "fiber_consumer.h"
+#include "timer.h"
 #include "logger.h"
 #include <cassert>
 #include <iostream>
 #include <algorithm>
+#include <thread>
 
 namespace fiber {
     Scheduler::Scheduler(): state_(SchedulerState::STOPPED) {
@@ -30,11 +32,19 @@ void Scheduler::init(int worker_count) {
 }
 
 void Scheduler::run() {
+    auto& timer_wheel = TimerWheel::getInstance();
+    uint64_t tick_interval_ms = timer_wheel.getTickInterval();
+    
+    LOG_DEBUG("Scheduler event loop started (tick interval: {}ms)", tick_interval_ms);
+    
     while (state_ == SchedulerState::RUNNING) {
-        std::this_thread::yield();
+        timer_wheel.tick();
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(tick_interval_ms));
     }
 
     LOG_DEBUG("Scheduler stopping");
+    timer_wheel.stop();
     stopConsumers();
     state_ = SchedulerState::STOPPED;
     LOG_DEBUG("Scheduler stopped");
@@ -71,7 +81,10 @@ void Scheduler::scheduleImmediate(Fiber::ptr fiber) {
         return;
     }
 
-    assert(fiber->getState() != FiberState::DONE && "Cannot resume a finished fiber");
+    // 如果fiber已经完成，直接忽略（这是正常情况，不是错误）
+    if (fiber->getState() == FiberState::DONE) {
+        return;
+    }
 
     if (FiberConsumer* consumer = selectConsumer()) {
         consumer->schedule(fiber);

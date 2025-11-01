@@ -1,5 +1,6 @@
 #include "include/sync.h"
 #include "include/scheduler.h"
+#include "include/timer.h"
 
 namespace fiber {
 
@@ -170,6 +171,69 @@ void WaitGroup::notify_waiters_if_done() {
         LOG_DEBUG("WaitGroup::notify_waiters_if_done() - notifying all waiters");
         waiters_->notify_all();
     }
+}
+
+// ==================== FiberCondition wait_for 实现 ====================
+
+// 显式实例化常用的wait_for版本
+template<>
+bool FiberCondition::wait_for<int64_t, std::milli>(
+    std::unique_lock<FiberMutex>& lock,
+    const std::chrono::duration<int64_t, std::milli>& timeout) {
+    
+    if (!lock.owns_lock()) {
+        throw std::system_error(std::make_error_code(std::errc::operation_not_permitted),
+                              "wait_for called without holding lock");
+    }
+
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout);
+    if (ms.count() <= 0) {
+        return false;  // 超时时间为0或负数，直接返回超时
+    }
+
+    // 获取当前协程
+    auto current_fiber = Fiber::GetCurrentFiberPtr();
+    if (!current_fiber) {
+        throw std::runtime_error("wait_for must be called from within a fiber");
+    }
+
+    // 创建共享状态
+    auto timeout_state = std::make_shared<std::atomic<bool>>(false);
+    auto notified_state = std::make_shared<std::atomic<bool>>(false);
+
+    // 添加定时器 - 定时器到期时标记超时并唤醒fiber
+    auto& timer_wheel = TimerWheel::getInstance();
+    auto timer = timer_wheel.addTimer(static_cast<uint64_t>(ms.count()), 
+        [timeout_state, notified_state, waiters = waiters_.get()]() {
+        // 超时了，先标记超时
+        timeout_state->store(true, std::memory_order_release);
+        // 检查是否已被notify
+        if (!notified_state->exchange(true, std::memory_order_acq_rel)) {
+            // 没被notify过，通过waitqueue唤醒fiber
+            waiters->notify_one();
+        }
+        // 如果已被notify，什么都不做（fiber已经被唤醒）
+    }, false);
+
+    // 释放锁，添加到等待队列并挂起
+    lock.unlock();
+    waiters_->wait();
+
+    // 被唤醒了，立即标记为已notify并取消定时器（避免竞争）
+    bool was_notified = !notified_state->exchange(true, std::memory_order_acq_rel);
+    if (was_notified) {
+        // 是notify唤醒的，立即取消定时器，防止定时器在协程完成后触发
+        timer_wheel.cancel(timer);
+    }
+
+    // 读取超时状态
+    bool timed_out = timeout_state->load(std::memory_order_acquire);
+
+    // 重新获取锁
+    lock.lock();
+
+    // 返回是否超时
+    return !timed_out;
 }
 
 } // namespace fiber

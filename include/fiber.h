@@ -83,6 +83,12 @@ public:
     static int getWorkerCount();
     
     /**
+     * @brief 协程休眠（毫秒）
+     * @param ms 休眠时间（毫秒）
+     */
+    static void sleep(uint64_t ms);
+    
+    /**
      * @brief 获取当前协程的shared_ptr（用于WaitQueue等同步机制）
      * @return 当前协程的shared_ptr，如果不在协程中则返回nullptr
      */
