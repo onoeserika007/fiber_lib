@@ -10,8 +10,10 @@
 
 namespace fiber {
 
+thread_local Fiber::ptr Fiber::main_fiber_;
 thread_local Fiber* Fiber::current_fiber_ = nullptr;
 thread_local std::weak_ptr<Fiber> Fiber::current_fiber_weak_;
+
 std::atomic<uint64_t> fiber_id_counter{0};
 
 uint64_t Fiber::generateId() {
@@ -53,28 +55,21 @@ void Fiber::resume() {
     assert(state_ != FiberState::DONE && "Cannot resume a finished fiber");
     assert(context_ && "Fiber context is null");
     
-    if (state_ == FiberState::READY || state_ == FiberState::SUSPENDED) {
-        Fiber* old_fiber = current_fiber_;
-        
-        // LOG_DEBUG("Resuming fiber {}", id_);  // 过于频繁，注释掉
-        
-        if (old_fiber && old_fiber->context_) {
-            SetCurrentFiberPtr(shared_from_this());
-            // 注意：这里我们没有shared_ptr来设置weak_ptr，这是一个问题
-            state_ = FiberState::RUNNING;
-            old_fiber->context_->switchTo(context_.get());
-        } else {
-            // 通过调度器获取main_fiber
-            auto main_fiber = Scheduler::GetMainFiber();
-            SetCurrentFiberPtr(shared_from_this());
-            // 注意：这里我们没有shared_ptr来设置weak_ptr，这是一个问题
-            state_ = FiberState::RUNNING;
-            main_fiber->context_->switchTo(context_.get());
-        }
+    auto current_fiber = Fiber::GetCurrentFiberPtr();
+    if (!current_fiber) {
+        current_fiber = GetMainFiber();
+        // LOG_DEBUG("[resume] Building main fiber {}", current_fiber->getId());
+        SetCurrentFiberPtr(current_fiber);
     }
+    parent_fiber_ = current_fiber;
+
+    assert(parent_fiber_ && parent_fiber_->context_ && "parent_fiber_ incomplete");
+    // LOG_DEBUG("[resume] Resuming from parent {} to {}", parent_fiber_->getId(), getId());
+
+    SetCurrentFiberPtr(shared_from_this());
+    state_ = FiberState::RUNNING;
+    parent_fiber_->context_->switchTo(context_.get());
 }
-
-
 
 void Fiber::yield() {
     Fiber* current = current_fiber_;
@@ -84,19 +79,42 @@ void Fiber::yield() {
     if (current->state_ != FiberState::DONE) {
         current->state_ = FiberState::SUSPENDED;
     }
-    
-    // LOG_DEBUG("Yielding fiber {}", current->id_);  // 过于频繁，注释掉
-    
-    // 通过 Scheduler 获取 main_fiber，多线程安全
-    auto main_fiber = Scheduler::GetMainFiber();
-    assert(main_fiber && "main_fiber must be not null");
-    SetCurrentFiberPtr(main_fiber);
-    main_fiber->state_ = FiberState::RUNNING;
-    current->context_->switchTo(main_fiber->context_.get());
+
+    yield_internal(current);
+}
+
+void Fiber::block_yield() {
+    Fiber* current = current_fiber_;
+    assert(current && "No current fiber");
+
+    // 只有在不是DONE状态时才设置为SUSPENDED
+    if (current->state_ != FiberState::DONE) {
+        current->state_ = FiberState::BLOCKED;
+    }
+
+    yield_internal(current);
+}
+
+void Fiber::yield_internal(Fiber *current) {
+    // 只有为DONE状态时才清除parent ptr
+    auto parent_fiber = current->parent_fiber_;
+    if (current->state_ == FiberState::DONE) {
+        current->parent_fiber_ = nullptr;
+    }
+
+    // LOG_DEBUG("[do_yield] yielding from {}", current->getId());
+    assert(parent_fiber && "parent_fiber must be not null");
+    SetCurrentFiberPtr(parent_fiber);
+    parent_fiber->state_ = FiberState::RUNNING;
+    current->context_->switchTo(parent_fiber->context_.get());
 }
 
 FiberState Fiber::getState() const {
     return state_;
+}
+
+void Fiber::setState(FiberState state) {
+    state_ = state;
 }
 
 uint64_t Fiber::getId() const {
@@ -113,7 +131,14 @@ void Fiber::fiberEntry() {
     
     current->state_ = FiberState::DONE;
 
-    yield();
+    yield_internal(current);
+}
+
+Fiber::ptr Fiber::GetMainFiber() {
+    if (!main_fiber_) {
+        main_fiber_ = Fiber::create(Fiber::FiberFunction{});
+    }
+    return main_fiber_;
 }
 
 // =========================
@@ -125,13 +150,13 @@ void Fiber::go(FiberFunction func) {
     fiber->setRunMode(RunMode::SCHEDULED);
     
     // 获取多线程调度器并立即调度
-    auto scheduler = Scheduler::GetOrCreateMultiThreadScheduler();
-    scheduler->scheduleImmediate(fiber);
+    auto&& scheduler = Scheduler::GetScheduler();
+    scheduler.scheduleImmediate(fiber);
 }
 
 int Fiber::getWorkerCount() {
-    auto scheduler = Scheduler::GetScheduler();
-    return scheduler ? scheduler->getWorkerCount() : 0;
+    auto&& scheduler = Scheduler::GetScheduler();
+    return scheduler.getWorkerCount();
 }
 
 Fiber::ptr Fiber::GetCurrentFiberPtr() {

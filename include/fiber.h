@@ -16,6 +16,7 @@ enum class FiberState {
     READY,
     RUNNING,
     SUSPENDED,
+    BLOCKED,
     DONE
 };
 
@@ -33,8 +34,11 @@ public:
     
     void resume();
     static void yield();
+    static void block_yield();
     
     FiberState getState() const;
+    void setState(FiberState state);
+
     uint64_t getId() const;
     
     // =========================
@@ -72,14 +76,7 @@ public:
      * @param func 要执行的函数
      */
     static void go(FiberFunction func);
-    
-    /**
-     * 等待协程完成（给正在执行的协程一些时间）
-     */
-    static void waitAll() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    
+
     /**
      * 获取工作线程数量
      */
@@ -108,20 +105,24 @@ private:
     Fiber& operator=(Fiber&&) = default;
 
     void Init();
-
     static void fiberEntry();
+    static void yield_internal(Fiber *current);
 
     // RunMode管理
     void setRunMode(RunMode mode) { run_mode_ = mode; }
     RunMode getRunMode() const { return run_mode_; }
+
 
     uint64_t id_;
     FiberState state_;
     FiberFunction func_;
     std::unique_ptr<Context> context_;
     RunMode run_mode_;
+    Fiber::ptr parent_fiber_;
     
     static uint64_t generateId();
+    static Fiber::ptr GetMainFiber();
+    static thread_local Fiber::ptr main_fiber_;
     static thread_local Fiber* current_fiber_;
     static thread_local std::weak_ptr<Fiber> current_fiber_weak_;
 };
