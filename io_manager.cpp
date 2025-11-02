@@ -67,6 +67,7 @@ bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     auto* ctx = getFdContext(fd);
     uint32_t old_events = ctx->events;
     uint32_t new_events = old_events | static_cast<uint32_t>(event);
+    // LOG_DEBUG("[IOManager] Add Events, fd={}, old_events={}, new_events={}", fd, old_events, new_events);
     
     epoll_event ep_event;
     memset(&ep_event, 0, sizeof(ep_event));
@@ -102,7 +103,9 @@ bool IOManager::delEvent(int fd, IOEvent event) {
     }
     
     auto* ctx = it->second.get();
-    uint32_t new_events = ctx->events & ~static_cast<uint32_t>(event);
+    uint32_t old_events = ctx->events;
+    uint32_t new_events = old_events & ~static_cast<uint32_t>(event);
+    // LOG_DEBUG("[IOManager] Del Event, fd={}, old_events={}, new_events={}", fd, old_events, new_events);
     
     epoll_event ep_event;
     memset(&ep_event, 0, sizeof(ep_event));
@@ -133,6 +136,11 @@ bool IOManager::cancelEvent(int fd, IOEvent event) {
     return true;
 }
 
+void IOManager::cancelAll(int fd) {
+    // 取消所有可能的事件：READ | WRITE
+    cancelEvent(fd, static_cast<IOEvent>(EPOLLIN | EPOLLOUT));
+}
+
 void IOManager::triggerEvent(int fd, IOEvent event) {
     auto it = fd_contexts_.find(fd);
     if (it == fd_contexts_.end()) {
@@ -141,9 +149,11 @@ void IOManager::triggerEvent(int fd, IOEvent event) {
     
     auto* ctx = it->second.get();
     
-    if (event == IOEvent::READ) {
+    uint32_t events = static_cast<uint32_t>(event);
+    if (events & EPOLLIN) {
         ctx->read_waiters->notify_all();
-    } else if (event == IOEvent::WRITE) {
+    }
+    if (events & EPOLLOUT) {
         ctx->write_waiters->notify_all();
     }
 }

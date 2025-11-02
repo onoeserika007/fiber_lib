@@ -21,6 +21,9 @@ public:
     static std::optional<int> accept(int sockfd, sockaddr* addr, socklen_t* addrlen, int64_t timeout_ms = -1);
     
     static bool connect(int sockfd, const sockaddr* addr, socklen_t addrlen, int64_t timeout_ms = -1);
+    
+    // Close fd and clean up all IOManager state
+    static void close(int fd);
 
 private:
     template<typename Func>

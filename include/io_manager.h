@@ -30,6 +30,7 @@ public:
     bool addEvent(int fd, IOEvent event, Fiber::ptr fiber);
     bool delEvent(int fd, IOEvent event);
     bool cancelEvent(int fd, IOEvent event);
+    void cancelAll(int fd);  // 取消fd上的所有事件
     
     void processEvents(int timeout_ms);
     
