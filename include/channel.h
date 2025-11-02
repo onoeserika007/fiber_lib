@@ -10,9 +10,13 @@
 
 namespace fiber {
 
-// 前置声明
 class WaitQueue;
 class SelectCase;
+
+// template<typename T>
+// class Channel;
+//
+// template<typename T> typename Channel<T>::ptr make_channel(size_t capacity = 0);
 
 /**
  * @brief 无锁协程Channel类
@@ -22,12 +26,11 @@ class Channel {
 public:
     using value_type = T;
     using ptr = std::shared_ptr<Channel<T>>;
-    
-    explicit Channel(size_t capacity = 0);
+
+    template<typename Y>
+    friend typename Channel<Y>::ptr make_channel(size_t capacity);
+
     ~Channel();
-    
-    Channel(const Channel&) = delete;
-    Channel& operator=(const Channel&) = delete;
     
     // 阻塞发送和接收
     bool send(T value);
@@ -38,11 +41,9 @@ public:
     bool try_recv(T& value);
     
     // 带超时的发送和接收
-    template<typename Rep, typename Period>
-    bool send_timeout(T value, const std::chrono::duration<Rep, Period>& timeout);
-    
-    template<typename Rep, typename Period>
-    bool recv_timeout(T& value, const std::chrono::duration<Rep, Period>& timeout);
+    bool send_timeout(T value, uint64_t timeout_ms);
+
+    bool recv_timeout(T& value, uint64_t timeout_ms);
     
     // Channel管理
     void close();
@@ -53,8 +54,11 @@ public:
     bool full() const;
 
 private:
-    friend class SelectCase;
-    
+    explicit Channel(size_t capacity = 0);
+
+    Channel(const Channel&) = delete;
+    Channel& operator=(const Channel&) = delete;
+
     enum class State { OPEN, CLOSED };
     
     // 无锁环形缓冲区
@@ -262,12 +266,8 @@ bool Channel<T>::try_pop_lockfree(T& value) {
 
 // ==================== 超时方法实现 ====================
 
-#include "timer.h"
-#include "scheduler.h"
-
 template<typename T>
-template<typename Rep, typename Period>
-bool Channel<T>::send_timeout(T value, const std::chrono::duration<Rep, Period>& timeout) {
+bool Channel<T>::send_timeout(T value, uint64_t timeout_ms) {
     // 先尝试非阻塞发送
     if (try_push_lockfree(std::move(value))) {
         recv_waiters_->notify_one();
@@ -277,11 +277,6 @@ bool Channel<T>::send_timeout(T value, const std::chrono::duration<Rep, Period>&
     // 检查是否已关闭
     if (state_.load(std::memory_order_acquire) == State::CLOSED) {
         return false;
-    }
-    
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout);
-    if (ms.count() <= 0) {
-        return false;  // 超时时间为0或负数
     }
     
     // 获取当前协程
@@ -296,7 +291,7 @@ bool Channel<T>::send_timeout(T value, const std::chrono::duration<Rep, Period>&
     
     // 添加定时器 - 通过waitqueue唤醒而不是直接调度
     auto& timer_wheel = TimerWheel::getInstance();
-    auto timer = timer_wheel.addTimer(static_cast<uint64_t>(ms.count()),
+    auto timer = timer_wheel.addTimer(timeout_ms,
         [timeout_state, woken_state, waiters = send_waiters_.get()]() {
             timeout_state->store(true, std::memory_order_release);
             if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
@@ -333,8 +328,7 @@ bool Channel<T>::send_timeout(T value, const std::chrono::duration<Rep, Period>&
 }
 
 template<typename T>
-template<typename Rep, typename Period>
-bool Channel<T>::recv_timeout(T& value, const std::chrono::duration<Rep, Period>& timeout) {
+bool Channel<T>::recv_timeout(T& value, uint64_t timeout_ms) {
     // 先尝试非阻塞接收
     if (try_pop_lockfree(value)) {
         send_waiters_->notify_one();
@@ -345,9 +339,8 @@ bool Channel<T>::recv_timeout(T& value, const std::chrono::duration<Rep, Period>
     if (state_.load(std::memory_order_acquire) == State::CLOSED && is_empty_lockfree()) {
         return false;
     }
-    
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout);
-    if (ms.count() <= 0) {
+
+    if (timeout_ms <= 0) {
         return false;  // 超时时间为0或负数
     }
     
@@ -363,7 +356,7 @@ bool Channel<T>::recv_timeout(T& value, const std::chrono::duration<Rep, Period>
     
     // 添加定时器 - 通过waitqueue唤醒而不是直接调度
     auto& timer_wheel = TimerWheel::getInstance();
-    auto timer = timer_wheel.addTimer(static_cast<uint64_t>(ms.count()),
+    auto timer = timer_wheel.addTimer(timeout_ms,
         [timeout_state, woken_state, waiters = recv_waiters_.get()]() {
             timeout_state->store(true, std::memory_order_release);
             if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
@@ -399,10 +392,10 @@ bool Channel<T>::recv_timeout(T& value, const std::chrono::duration<Rep, Period>
     }
 }
 
-// 便利函数
-template<typename T>
-typename Channel<T>::ptr make_channel(size_t capacity = 0) {
-    return std::make_shared<Channel<T>>(capacity);
+// Helper Func
+template<typename Y>
+typename Channel<Y>::ptr make_channel(size_t capacity = 0) {
+    return std::shared_ptr<Channel<Y>>(new Channel<Y>(capacity));
 }
 
 } // namespace fiber
