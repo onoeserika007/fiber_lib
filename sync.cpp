@@ -71,7 +71,7 @@ bool FiberMutex::try_acquire_lock() {
                                         std::memory_order_relaxed)) {
         // 成功获取锁，设置owner
         owner_.store(current.get(), std::memory_order_release);
-        LOG_DEBUG("FiberMutex::try_acquire_lock() - lock acquired by fiber");
+        // LOG_DEBUG("FiberMutex::try_acquire_lock() - lock acquired by fiber");
         return true;
     }
     
@@ -81,7 +81,7 @@ bool FiberMutex::try_acquire_lock() {
 void FiberMutex::release_lock_internal() {
     owner_.store(nullptr, std::memory_order_release);
     locked_.store(false, std::memory_order_release);
-    LOG_DEBUG("FiberMutex::release_lock_internal() - lock released");
+    // LOG_DEBUG("FiberMutex::release_lock_internal() - lock released");
 }
 
 // FiberCondition 实现
@@ -100,7 +100,7 @@ void FiberCondition::wait(std::unique_lock<FiberMutex>& lock) {
     // 释放锁并等待通知（原子操作）
     lock.unlock();
     
-    LOG_DEBUG("FiberCondition::wait() - fiber waiting for condition");
+    // LOG_DEBUG("FiberCondition::wait() - fiber waiting for condition");
     waiters_->wait();
     
     // 重新获取锁
@@ -135,7 +135,7 @@ void WaitGroup::add(int delta) {
         throw std::invalid_argument("WaitGroup counter cannot be negative");
     }
     
-    LOG_DEBUG("WaitGroup::add({}) - counter: {} -> {}", delta, old_count, new_count);
+    // LOG_DEBUG("WaitGroup::add({}) - counter: {} -> {}", delta, old_count, new_count);
     
     // 如果计数器归零，通知所有等待者
     if (new_count == 0) {
@@ -153,7 +153,7 @@ void WaitGroup::wait() {
         return;
     }
     
-    LOG_DEBUG("WaitGroup::wait() - waiting for counter to reach zero");
+    // LOG_DEBUG("WaitGroup::wait() - waiting for counter to reach zero");
     
     // 进入等待队列，挂起当前fiber
     waiters_->wait();
@@ -168,7 +168,7 @@ int WaitGroup::count() const {
 
 void WaitGroup::notify_waiters_if_done() {
     if (counter_.load(std::memory_order_acquire) == 0) {
-        LOG_DEBUG("WaitGroup::notify_waiters_if_done() - notifying all waiters");
+        // LOG_DEBUG("WaitGroup::notify_waiters_if_done() - notifying all waiters");
         waiters_->notify_all();
     }
 }
