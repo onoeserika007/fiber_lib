@@ -10,7 +10,7 @@
 namespace fiber {
 
 /**
- * @brief 真·无锁环形队列（Lock-Free Ring Buffer）
+ * @brief 无锁环形队列（Lock-Free Ring Buffer）
  *
  * - 使用固定容量预分配存储（in-place placement new）
  * - 仅通过原子操作维护 head/tail 索引
