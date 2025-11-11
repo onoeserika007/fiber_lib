@@ -8,6 +8,8 @@
 #include <unordered_map>
 #include <atomic>
 
+#include "sync.h"
+
 namespace fiber {
 
 enum class IOEvent {
@@ -46,6 +48,7 @@ private:
     int epoll_fd_{-1};
     std::unordered_map<int, std::unique_ptr<FdContext>> fd_contexts_;
     std::atomic<bool> running_{false};
+    fiber::FiberMutex mu_;
     
     FdContext* getFdContext(int fd);
     void triggerEvent(int fd, IOEvent event);

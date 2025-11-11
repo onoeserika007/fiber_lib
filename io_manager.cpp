@@ -63,6 +63,8 @@ bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     if (!running_.load(std::memory_order_acquire)) {
         return false;
     }
+
+    std::lock_guard latch_ {mu_};
     
     auto* ctx = getFdContext(fd);
     uint32_t old_events = ctx->events;
@@ -77,7 +79,7 @@ bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     int op = old_events ? EPOLL_CTL_MOD : EPOLL_CTL_ADD;
     int ret = epoll_ctl(epoll_fd_, op, fd, &ep_event);
     if (ret < 0) {
-        LOG_ERROR("epoll_ctl failed: fd={}, op={}, error={}", fd, op, strerror(errno));
+        LOG_ERROR("[addEvent] epoll_ctl failed: fd={}, op={}, error={}", fd, op, strerror(errno));
         return false;
     }
     
@@ -96,6 +98,8 @@ bool IOManager::delEvent(int fd, IOEvent event) {
     if (!running_.load(std::memory_order_acquire)) {
         return false;
     }
+
+    std::lock_guard latch_ {mu_};
     
     auto it = fd_contexts_.find(fd);
     if (it == fd_contexts_.end()) {
@@ -115,7 +119,7 @@ bool IOManager::delEvent(int fd, IOEvent event) {
     int op = new_events ? EPOLL_CTL_MOD : EPOLL_CTL_DEL;
     int ret = epoll_ctl(epoll_fd_, op, fd, &ep_event);
     if (ret < 0) {
-        LOG_ERROR("epoll_ctl failed: fd={}, op={}, error={}", fd, op, strerror(errno));
+        LOG_ERROR("[delEvent] epoll_ctl failed: fd={}, op={}, error={}", fd, op, strerror(errno));
         return false;
     }
     
@@ -142,6 +146,9 @@ void IOManager::cancelAll(int fd) {
 }
 
 void IOManager::triggerEvent(int fd, IOEvent event) {
+
+    std::lock_guard latch_ {mu_};
+
     auto it = fd_contexts_.find(fd);
     if (it == fd_contexts_.end()) {
         return;
