@@ -55,20 +55,13 @@ public:
         // 目前简单返回try_lock的结果
         return try_lock();
     }
-    
-    /**
-     * @brief 检查锁是否被当前协程持有
-     */
-    bool is_locked_by_current() const;
 
 private:
     std::atomic<bool> locked_;                // 锁状态
-    std::atomic<Fiber*> owner_;               // 锁的持有者（原子指针）
     std::unique_ptr<WaitQueue> waiters_;      // 等待获取锁的协程队列
     
     // 内部辅助方法
     bool try_acquire_lock();
-    void release_lock_internal();
 };
 
 /**
