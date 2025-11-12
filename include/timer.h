@@ -129,8 +129,10 @@ public:
         return running_.load(std::memory_order_acquire);
     }
 
+    uint32_t getNextTimeOutMs();
+
 private:
-    TimerWheel(size_t slots = 256, Duration tick_interval = Duration(100));
+    TimerWheel(size_t slots = 256, Duration tick_interval = Duration(10));
 
     // 禁止拷贝
     TimerWheel(const TimerWheel&) = delete;
@@ -160,6 +162,9 @@ private:
     
     // 运行状态
     std::atomic<bool> running_;
+
+    // 上一次tick时间
+    TimePoint last_tick_time_{Clock::now()};
 };
 
 } // namespace fiber

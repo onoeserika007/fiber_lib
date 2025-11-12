@@ -165,12 +165,25 @@ void IOManager::triggerEvent(int fd, IOEvent event) {
     }
 }
 
+std::string IOManager::events_to_string(epoll_event events[], int n) {
+    std::ostringstream os;
+    os << "[";
+    if (n > 0) {
+        os << events[0].data.fd << "(" << events[0].events << ")";
+    }
+    for (int i = 1; i < n; i++) {
+        os << ", " << events[i].data.fd << "(" << events[i].events << ")";
+    }
+    os << "]";
+    return os.str();
+}
+
 void IOManager::processEvents(int timeout_ms) {
     if (!running_.load(std::memory_order_acquire)) {
         return;
     }
     
-    constexpr int MAX_EVENTS = 256;
+    constexpr int MAX_EVENTS = 1024;
     epoll_event events[MAX_EVENTS];
     
     int n = epoll_wait(epoll_fd_, events, MAX_EVENTS, timeout_ms);
@@ -180,6 +193,12 @@ void IOManager::processEvents(int timeout_ms) {
         }
         return;
     }
+
+    total_events_ += n;
+    // LOG_INFO("Epoll received {} events: {}, total {}", n, events_to_string(events, n), total_events_);
+    // LOG_INFO("History fd size:{}", history_fd_.size());
+    // LOG_INFO("Fd Contexts size:{}", fd_contexts_.size());
+    // LOG_INFO("Add Events call counts:{}", add_events_call_counts_);
     
     for (int i = 0; i < n; ++i) {
         int fd = events[i].data.fd;
@@ -187,6 +206,7 @@ void IOManager::processEvents(int timeout_ms) {
         
         auto it = fd_contexts_.find(fd);
         if (it == fd_contexts_.end()) {
+            LOG_WARN("fd:{} cannot find fd context, event may have lost", fd);
             continue;
         }
         

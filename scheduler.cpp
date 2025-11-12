@@ -41,8 +41,9 @@ void Scheduler::run() {
     LOG_DEBUG("Scheduler event loop started (tick interval: {}ms)", tick_interval_ms);
     
     while (state_ == SchedulerState::RUNNING) {
+        auto timeout_ms = timer_wheel.getNextTimeOutMs();
         // epoll 正好取代 sleep
-        io_manager.processEvents(static_cast<int>(tick_interval_ms));
+        io_manager.processEvents(static_cast<int>(timeout_ms));
         timer_wheel.tick();
     }
 
@@ -92,6 +93,8 @@ void Scheduler::scheduleImmediate(Fiber::ptr fiber) {
 
     if (FiberConsumer* consumer = selectConsumer()) {
         consumer->schedule(fiber);
+    } else {
+        LOG_ERROR("No consumer to select, fiber lost");
     }
 }
 

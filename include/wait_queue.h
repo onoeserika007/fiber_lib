@@ -5,18 +5,9 @@
 #include <atomic>
 #include <vector>
 #include "fiber.h"
+#include "lockfree_linked_queue.h"
 
 namespace fiber {
-
-/**
- * @brief 协程等待队列节点
- */
-struct WaitNode {
-    Fiber::ptr fiber;
-    std::atomic<WaitNode*> next{nullptr};
-    
-    WaitNode(Fiber::ptr f) : fiber(std::move(f)) {}
-};
 
 /**
  * @brief 无锁协程等待队列
@@ -26,8 +17,8 @@ struct WaitNode {
  */
 class WaitQueue {
 public:
-    WaitQueue() : head_(nullptr), tail_(nullptr) {}
-    ~WaitQueue();
+    WaitQueue() = default;
+    ~WaitQueue() = default;
     
     // 禁用拷贝和移动
     WaitQueue(const WaitQueue&) = delete;
@@ -65,12 +56,11 @@ public:
     void push_back_lockfree(Fiber::ptr fiber);
 
 private:
-    // 使用无锁链表实现等待队列
-    alignas(64) std::atomic<WaitNode*> head_;
-    alignas(64) std::atomic<WaitNode*> tail_;
     
     // 从队列头部取出节点
     Fiber::ptr pop_front_lockfree();
+
+    LockFreeLinkedList<Fiber::ptr> lock_free_queue_;
 };
 
 } // namespace fiber

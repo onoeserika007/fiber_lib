@@ -15,6 +15,19 @@ TimerWheel& TimerWheel::getInstance() {
     return instance;
 }
 
+uint32_t TimerWheel::getNextTimeOutMs() {
+    auto now = Clock::now();
+    auto elapsed = std::chrono::duration_cast<Duration>(now - last_tick_time_);
+    auto remaining = tick_interval_ - elapsed;
+    if (remaining.count() <= 0) {
+        return 0;
+    }
+    return static_cast<int>(remaining.count());
+}
+
+void TimerWheel::addTimerToSlot(size_t slot, TimerPtr timer) {
+}
+
 TimerWheel::TimerWheel(size_t slots, Duration tick_interval)
     : slots_(slots)
     , tick_interval_(tick_interval)
@@ -111,6 +124,14 @@ void TimerWheel::tick() {
         return;
     }
 
+    // check real tick
+    auto now = Clock::now();
+    auto elapsed = std::chrono::duration_cast<Duration>(now - last_tick_time_);
+    constexpr auto tolerance = Duration(1);
+    if (elapsed + tolerance < tick_interval_) {
+        return;
+    }
+
     // 1. 处理待添加的定时器
     processPendingTimers();
 
@@ -173,6 +194,9 @@ void TimerWheel::tick() {
 
     // 3. 移动到下一个slot
     current_slot_ = (current_slot_ + 1) % slots_;
+
+    // update lack_tick_time
+    last_tick_time_ = now;
 }
 
 void TimerWheel::processPendingTimers() {

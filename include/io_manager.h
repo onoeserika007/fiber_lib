@@ -7,6 +7,7 @@
 #include <functional>
 #include <unordered_map>
 #include <atomic>
+#include <unordered_set>
 
 #include "sync.h"
 
@@ -52,6 +53,11 @@ private:
     
     FdContext* getFdContext(int fd);
     void triggerEvent(int fd, IOEvent event);
+
+    std::string events_to_string(epoll_event events[], int n);
+    int total_events_ = 0;
+    int add_events_call_counts_ = 0;
+    std::unordered_set<int> history_fd_ {};
 };
 
 } // namespace fiber

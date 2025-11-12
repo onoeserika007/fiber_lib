@@ -6,16 +6,6 @@
 
 namespace fiber {
 
-WaitQueue::~WaitQueue() {
-    // 清理剩余的节点
-    WaitNode* current = head_.load();
-    while (current) {
-        WaitNode* next = current->next.load();
-        delete current;
-        current = next;
-    }
-}
-
 // 入队前，检查ready earlyreturn即可；入队后，把block yield改成普通yield，notify检查测只对block的fiber生效
 // 可能会有竞态问题，暂时先不管了，以后再修吧
 void WaitQueue::wait() {
@@ -69,49 +59,15 @@ std::size_t WaitQueue::notify_all() {
 }
 
 void WaitQueue::push_back_lockfree(Fiber::ptr fiber) {
-    WaitNode* new_node = new WaitNode(fiber);
-    
-    // 使用CAS操作无锁插入到链表尾部
-    WaitNode* prev_tail = tail_.exchange(new_node);
-    
-    if (prev_tail == nullptr) {
-        // 队列原本为空，同时设置head
-        head_.store(new_node);
-    } else {
-        // 链接到前一个tail节点
-        prev_tail->next.store(new_node);
-    }
+    lock_free_queue_.push_back_lockfree(fiber);
 }
 
 Fiber::ptr WaitQueue::pop_front_lockfree() {
-    WaitNode* head = head_.load();
-    
-    // 队列为空
-    if (head == nullptr) {
-        return nullptr;
-    }
-    
-    // 尝试使用CAS更新head指针
-    WaitNode* next = head->next.load();
-    
-    if (!head_.compare_exchange_weak(head, next)) {
-        // CAS失败，可能被其他线程修改了，返回空
-        return nullptr;
-    }
-    
-    // 如果这是最后一个节点，同时更新tail
-    if (next == nullptr) {
-        WaitNode* expected_tail = head;
-        tail_.compare_exchange_weak(expected_tail, nullptr);
-    }
-    
-    Fiber::ptr result = head->fiber;
-    delete head;
-    return result;
+    return lock_free_queue_.pop_front_lockfree().value_or(nullptr);
 }
 
 bool WaitQueue::empty() const {
-    return head_.load() == nullptr;
+    return lock_free_queue_.empty();
 }
 
 } // namespace fiber

@@ -30,15 +30,14 @@ void FiberConsumer::stop() {
         return; // 已经停止
     }
 
-    Fiber::ptr task;
-    while (queue_->try_pop(task)) {
-        // 可选：标记任务取消状态，或者直接 resume 完成
-        // task->cancel(); 或 task->resume();
-    }
-
     // 这里一直报错是因为我在用FiberConsumer线程自己join自己，当然会出错了
     if (thread_.joinable()) {
         thread_.join();
+    }
+
+    Fiber::ptr task;
+    while (queue_->try_pop(task)) {
+        task->resume();
     }
 }
 

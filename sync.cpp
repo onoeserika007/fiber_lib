@@ -30,11 +30,15 @@ bool FiberMutex::try_lock() {
 }
 
 void FiberMutex::unlock() {
+    if (!owner_.load(std::memory_order_acquire)) {
+        return;
+    }
+
     if (!locked_.load(std::memory_order_acquire)) {
         throw std::system_error(std::make_error_code(std::errc::operation_not_permitted),
                               "Attempting to unlock an unlocked mutex");
     }
-    
+
     auto current = Fiber::GetCurrentFiberPtr();
     Fiber* expected_owner = current.get();
     if (!current || owner_.load(std::memory_order_acquire) != expected_owner) {

@@ -50,6 +50,7 @@ void Fiber::Init() {
 
 Fiber::~Fiber() {
     // LOG_DEBUG("Fiber destroyed with ID: {}", id_);  // 过于频繁，注释掉
+    assert(state_ == FiberState::DONE && "destroying a non-finished fiber");
 }
 
 void Fiber::resume() {

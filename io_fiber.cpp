@@ -42,9 +42,18 @@ std::optional<ssize_t> IO::doIO(int fd, IOEvent event, Func&& op, int64_t timeou
                 }
             }, false);
     }
-    
+
+    // if (event == IOEvent::READ) {
+    //     LOG_INFO("fd:{} is going into the loop", fd);
+    // }
+    // DEFER({
+    //     if (event == IOEvent::READ) {
+    //         LOG_INFO("fd:{} is going out of the loop", fd);
+    //     }
+    // });
     while (true) {
         ssize_t result = op();
+        // LOG_INFO("fd:{} is trying to get its result", fd);
 
         // success or failed not for waiting more data(EAGAIN | EWOULDBLOCK) or wait for connecting, complete this IO
         if (result >= 0
@@ -52,21 +61,29 @@ std::optional<ssize_t> IO::doIO(int fd, IOEvent event, Func&& op, int64_t timeou
             if (timer && !woken_state->exchange(true, std::memory_order_acq_rel)) {
                 timer_wheel.cancel(timer);
             }
+            // LOG_INFO("fd:{} Get IO Result, return", fd);
             return result;
         }
+
+        // LOG_INFO("fd:{} is checking timeout", fd);
         
         if (timeout_state->load(std::memory_order_acquire)) {
             errno = ETIMEDOUT;
+            // LOG_INFO("fd:{} Get IO Timeout, return", fd);
             return std::nullopt;
         }
+
+        // LOG_INFO("fd:{} is adding event", fd);
         
         if (!io_manager.addEvent(fd, event, current_fiber)) {
             if (timer && !woken_state->exchange(true, std::memory_order_acq_rel)) {
                 timer_wheel.cancel(timer);
             }
+            // LOG_INFO("fd:{} Get IO AddEvent Failed, return", fd);
             return std::nullopt;
         }
-        
+
+        // LOG_INFO("fd:{} is going to block", fd);
         Fiber::block_yield();
         
         io_manager.delEvent(fd, event);
