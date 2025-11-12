@@ -5,7 +5,7 @@
 namespace fiber {
 
 FiberMutex::FiberMutex() 
-    : locked_(false), owner_(nullptr), waiters_(std::make_unique<WaitQueue>()) {
+    : locked_(false), waiters_(std::make_unique<WaitQueue>()) {
 }
 
 FiberMutex::~FiberMutex() {
@@ -19,7 +19,7 @@ void FiberMutex::lock() {
     // 快速路径：尝试直接获取锁
     while (!try_acquire_lock()) {
         // 慢速路径：进入等待队列并挂起当前fiber
-        LOG_DEBUG("FiberMutex::lock() - fiber waiting for lock");
+        // LOG_DEBUG("FiberMutex::lock() - fiber waiting for lock");
         waiters_->wait();
         // 被唤醒后继续循环尝试获取锁
     }
@@ -30,35 +30,20 @@ bool FiberMutex::try_lock() {
 }
 
 void FiberMutex::unlock() {
-    if (!owner_.load(std::memory_order_acquire)) {
-        return;
-    }
-
-    if (!locked_.load(std::memory_order_acquire)) {
-        throw std::system_error(std::make_error_code(std::errc::operation_not_permitted),
-                              "Attempting to unlock an unlocked mutex");
-    }
 
     auto current = Fiber::GetCurrentFiberPtr();
-    Fiber* expected_owner = current.get();
-    if (!current || owner_.load(std::memory_order_acquire) != expected_owner) {
+    if (!current) {
         throw std::system_error(std::make_error_code(std::errc::operation_not_permitted),
                               "Attempting to unlock a mutex not owned by current fiber");
     }
-    
-    release_lock_internal();
-    
+
+    if (locked_.exchange(false, std::memory_order_release) != true) {
+        throw std::system_error(std::make_error_code(std::errc::operation_not_permitted),
+                                "Double unlock or unlock without lock");
+    }
+
     // 通知一个等待的协程（WaitQueue内部是lock-free的）
     waiters_->notify_one();
-}
-
-bool FiberMutex::is_locked_by_current() const {
-    if (!locked_.load(std::memory_order_acquire)) {
-        return false;
-    }
-    
-    auto current = Fiber::GetCurrentFiberPtr();
-    return current && owner_.load(std::memory_order_acquire) == current.get();
 }
 
 bool FiberMutex::try_acquire_lock() {
@@ -73,19 +58,11 @@ bool FiberMutex::try_acquire_lock() {
     if (locked_.compare_exchange_strong(expected, true, 
                                         std::memory_order_acquire, 
                                         std::memory_order_relaxed)) {
-        // 成功获取锁，设置owner
-        owner_.store(current.get(), std::memory_order_release);
         // LOG_DEBUG("FiberMutex::try_acquire_lock() - lock acquired by fiber");
         return true;
     }
     
     return false;
-}
-
-void FiberMutex::release_lock_internal() {
-    owner_.store(nullptr, std::memory_order_release);
-    locked_.store(false, std::memory_order_release);
-    // LOG_DEBUG("FiberMutex::release_lock_internal() - lock released");
 }
 
 // FiberCondition 实现
