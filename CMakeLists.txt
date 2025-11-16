@@ -4,12 +4,24 @@ get_filename_component(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}" ABSOLUTE)
 # 将该目录下所有源文件添加到 SRC_LIST 变量中
 aux_source_directory(${SRC_DIR} SRC_LIST)
 
+list(APPEND SRC_LIST ${CMAKE_CURRENT_SOURCE_DIR}/swap_context.S)
+
 # 查找pthread库
 find_package(Threads REQUIRED)
 
 add_library(fiber_lib ${SRC_LIST})
-target_link_libraries(fiber_lib -ldl Threads::Threads base_lib)
+target_link_libraries(fiber_lib -ldl Threads::Threads base_lib )
+
+#target_compile_options(fiber_lib PRIVATE
+#    -Wall
+#    -Wextra
+#    -Wuninitialized
+#    -Wmaybe-uninitialized
+#    -fanalyzer  # GCC 静态分析器
+#)
+
 target_include_directories(fiber_lib PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/lockfree
     ${PROJECT_SOURCE_DIR}/third_party/basic_libs/include
 )

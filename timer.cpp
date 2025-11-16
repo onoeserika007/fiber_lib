@@ -65,7 +65,7 @@ TimerWheel::TimerPtr TimerWheel::addTimer(uint64_t ms, Callback cb, bool repeat)
     timer->rotations = ticks / slots_;
 
     // 添加到待处理队列（无锁）
-    while (!pending_timers_.try_push(timer)) {
+    while (!pending_timers_.try_enqueue(timer)) {
         // 队列满了，稍微等待
         if (!running_.load(std::memory_order_acquire)) {
             return nullptr;
@@ -204,7 +204,7 @@ void TimerWheel::processPendingTimers() {
     int processed = 0;
     const int max_batch = 100;  // 每次tick最多处理100个待添加定时器
 
-    while (processed < max_batch && pending_timers_.try_pop(timer)) {
+    while (processed < max_batch && pending_timers_.try_dequeue(timer)) {
         if (!timer || timer->canceled.load(std::memory_order_acquire)) {
             ++processed;
             continue;

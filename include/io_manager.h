@@ -5,7 +5,6 @@
 #include <sys/epoll.h>
 #include <memory>
 #include <functional>
-#include <unordered_map>
 #include <atomic>
 #include <unordered_set>
 
@@ -19,9 +18,18 @@ enum class IOEvent {
     WRITE = EPOLLOUT
 };
 
+static constexpr int MAX_FD = 65536;
+
 class IOManager {
 public:
+    struct FdContext {
+        std::unique_ptr<WaitQueue> read_waiters;
+        std::unique_ptr<WaitQueue> write_waiters;
+        uint32_t events{0};
+    };
+
     using IOCallback = std::function<void()>;
+    using FdContextPtr = std::shared_ptr<FdContext>;
     
     static IOManager& getInstance();
     
@@ -32,26 +40,21 @@ public:
     
     bool addEvent(int fd, IOEvent event, Fiber::ptr fiber);
     bool delEvent(int fd, IOEvent event);
-    bool cancelEvent(int fd, IOEvent event);
-    void cancelAll(int fd);  // 取消fd上的所有事件
+    bool wakeUp(int fd, IOEvent event);
+    void delAll(int fd);  // 取消fd上的所有事件
+    auto getFdContext(int fd) const -> FdContextPtr;
     
     void processEvents(int timeout_ms);
     
 private:
     IOManager();
     
-    struct FdContext {
-        std::unique_ptr<WaitQueue> read_waiters;
-        std::unique_ptr<WaitQueue> write_waiters;
-        uint32_t events{0};
-    };
-    
     int epoll_fd_{-1};
-    std::unordered_map<int, std::unique_ptr<FdContext>> fd_contexts_;
+    std::vector<std::atomic<FdContextPtr>> fd_contexts_{MAX_FD};
     std::atomic<bool> running_{false};
     fiber::FiberMutex mu_;
     
-    FdContext* getFdContext(int fd);
+    FdContextPtr getOrCreateFdContext(int fd);
     void triggerEvent(int fd, IOEvent event);
 
     std::string events_to_string(epoll_event events[], int n);

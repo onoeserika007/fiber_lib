@@ -10,7 +10,7 @@ namespace fiber {
 FiberConsumer::FiberConsumer(int id, Scheduler* scheduler) 
     : id_(id)
     , scheduler_(scheduler)
-    , queue_(std::make_unique<LockFreeQueue<std::shared_ptr<Fiber>>>(QUEUE_SIZE)) {
+    , queue_(std::make_unique<moodycamel::ConcurrentQueue<std::shared_ptr<Fiber>>>()) {
 }
 
 FiberConsumer::~FiberConsumer() {
@@ -36,26 +36,24 @@ void FiberConsumer::stop() {
     }
 
     Fiber::ptr task;
-    while (queue_->try_pop(task)) {
+    while (queue_->try_dequeue(task)) {
         task->resume();
     }
 }
 
-void FiberConsumer::schedule(Fiber::ptr fiber) {
+bool FiberConsumer::schedule(Fiber::ptr fiber) {
     if (!running_.load(std::memory_order_acquire)) {
-        return;
+        return true;
     }
     
-    // 尝试push到lock-free队列，如果队列满了就自旋等待
-    while (!queue_->try_push(fiber)) {
-        // 队列满，短暂等待后重试
-        std::this_thread::yield();
-    }
+    // 这里自旋的话会造成饥饿，因为分配任务的协程有可能是被选中的协程
+    // 并发特别大的话就容易这样，因此需要把自旋挪到外面去
+    return queue_->try_enqueue(fiber);
 }
 
-size_t FiberConsumer::getQueueSize() const {
-    return queue_->size();
-}
+size_t FiberConsumer::getQueueSize() const { return queue_->size_approx(); }
+
+int FiberConsumer::id() const { return id_; }
 
 void FiberConsumer::consumerLoop() {
     LOG_DEBUG("FiberConsumer {} started", id_);
@@ -63,32 +61,33 @@ void FiberConsumer::consumerLoop() {
     while (running_.load(std::memory_order_acquire)) {
         processTask();
     }
-    
+
+    Fiber::ResetMainFiber();
     LOG_DEBUG("FiberConsumer {} stopped", id_);
 }
 
 void FiberConsumer::processTask() {
     // Lock-free地从队列获取任务
-    Fiber::ptr task;
-    if (!queue_->try_pop(task)) {
-        // 队列为空，短暂休眠避免busy-wait
-        std::this_thread::sleep_for(std::chrono::microseconds(10));
+    Fiber::ptr task {};
+    if (!queue_->try_dequeue(task)) {
+        std::this_thread::yield();
         return;
     }
     
     if (!task) {
         return;
     }
+
+    // auto parent_fiber = task->getParentFiber();
+    // assert(parent_fiber.get() == nullptr && "A scheduling fiber can't have parent!");
     
     // 执行fiber任务
     task->resume();
 
     if (task->getState() == FiberState::SUSPENDED) {
         // if not blocked
-        while (!queue_->try_push(std::move(task))) {
-            // 队列满了，短暂等待
-            std::this_thread::yield();
-        }
+        auto& scheduler = Scheduler::GetScheduler();
+        scheduler.scheduleImmediate(task);
     }
     // 如果状态是DONE，fiber已完成，task的shared_ptr会自动释放
 }

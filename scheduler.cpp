@@ -10,7 +10,7 @@
 
 namespace fiber {
     Scheduler::Scheduler(): state_(SchedulerState::STOPPED) {
-    init(4);
+    init(8);
     // init(std::thread::hardware_concurrency());
     LOG_DEBUG("Scheduler created");
 }
@@ -91,10 +91,17 @@ void Scheduler::scheduleImmediate(Fiber::ptr fiber) {
         return;
     }
 
-    if (FiberConsumer* consumer = selectConsumer()) {
-        consumer->schedule(fiber);
-    } else {
-        LOG_ERROR("No consumer to select, fiber lost");
+    for (;;) {
+        FiberConsumer* consumer = selectConsumer();
+        if (!consumer) {
+            LOG_ERROR("No consumer to select, fiber lost");
+            return;
+        }
+
+        if (consumer->schedule(fiber)) {
+            // LOG_INFO("Scheduled fiber:{} to consumer:{}", fiber->getId(), consumer->id());
+            break;
+        }
     }
 }
 

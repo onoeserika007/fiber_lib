@@ -1,11 +1,13 @@
 #ifndef FIBER_CONSUMER_H
 #define FIBER_CONSUMER_H
 
-#include "fiber.h"
-#include "lockfree_queue.h"
-#include <thread>
 #include <atomic>
 #include <memory>
+#include <thread>
+#include "fiber.h"
+#include "lockfree_queue.h"
+
+#include "lockfree/concurrentqueue.h"
 
 namespace fiber {
 
@@ -25,22 +27,24 @@ public:
     FiberConsumer& operator=(const FiberConsumer&) = delete;
     FiberConsumer(FiberConsumer&&) = delete;
     FiberConsumer& operator=(FiberConsumer&&) = delete;
-    
+
+    int id() const;
     void start();
     void stop();
-    void schedule(Fiber::ptr fiber);
+    bool schedule(Fiber::ptr fiber);
     size_t getQueueSize() const;
     
 private:
     static constexpr size_t QUEUE_SIZE = 1024;  // 队列容量
     
     int id_;
-    Scheduler* scheduler_;
+private:
+    Scheduler * scheduler_;
     std::thread thread_;
     std::atomic<bool> running_{false};
     
     // 使用lock-free队列存储Fiber::ptr
-    std::unique_ptr<LockFreeQueue<std::shared_ptr<Fiber>>> queue_;
+    std::unique_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<Fiber>>> queue_;
     
     void consumerLoop();
     void processTask();

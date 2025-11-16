@@ -5,14 +5,12 @@
 #include "logger.h"
 #include <atomic>
 #include <cassert>
-#include <iostream>
-#include <stdlib.h>
 #include <ucontext.h>
 
 namespace fiber {
 
 thread_local Fiber::ptr Fiber::main_fiber_;
-thread_local Fiber* Fiber::current_fiber_ = nullptr;
+thread_local Fiber *Fiber::current_fiber_ = nullptr;
 thread_local std::weak_ptr<Fiber> Fiber::current_fiber_weak_;
 
 std::atomic<uint64_t> fiber_id_counter{0};
@@ -31,18 +29,18 @@ Fiber::Fiber(FiberFunction func)
 
 }
 
-void Fiber::Init() {
+void Fiber::Init(size_t stack_size) {
     // main fiber
     if (!func_) {
         auto self = shared_from_this();
         SetCurrentFiberPtr(self);
-        state_ = FiberState::RUNNING;
-        context_.reset(ContextFactory::createContext());
+        // state_ = FiberState::DONE;
+        context_ = AsmContext::createContext(stack_size);
         return;
     }
 
     // non-main fiber 需要先初始化一片上下文以供切换
-    context_.reset(ContextFactory::createContext());
+    context_ = AsmContext::createContext(stack_size);
     context_->initialize(&Fiber::fiberEntry);
 
     // LOG_DEBUG("Fiber created with ID: {}", id_);  // 过于频繁，注释掉
@@ -51,10 +49,14 @@ void Fiber::Init() {
 Fiber::~Fiber() {
     // LOG_DEBUG("Fiber destroyed with ID: {}", id_);  // 过于频繁，注释掉
     assert(state_ == FiberState::DONE && "destroying a non-finished fiber");
+    // LOG_INFO("Fiber:{} destroyed", id_);
 }
 
 void Fiber::resume() {
-    assert(state_ != FiberState::DONE && "Cannot resume a finished fiber");
+    if (state_ == FiberState::DONE) {
+        LOG_WARN("Resuming a finished fiber");
+        return;
+    }
     assert(context_ && "Fiber context is null");
     
     auto current_fiber = Fiber::GetCurrentFiberPtr();
@@ -65,12 +67,12 @@ void Fiber::resume() {
     }
     parent_fiber_ = current_fiber;
 
-    assert(parent_fiber_ && parent_fiber_->context_ && "parent_fiber_ incomplete");
-    // LOG_DEBUG("[resume] Resuming from parent {} to {}", parent_fiber_->getId(), getId());
+    // assert(parent_fiber_ && parent_fiber_->context_ && "parent_fiber_ incomplete");
+    // LOG_INFO("[resume] Resuming from current {} to {}", current_fiber->getId(), getId());
 
     SetCurrentFiberPtr(shared_from_this());
     state_ = FiberState::RUNNING;
-    parent_fiber_->context_->switchTo(context_.get());
+    current_fiber->context_->switchTo(context_.get());
 }
 
 void Fiber::yield() {
@@ -88,8 +90,9 @@ void Fiber::yield() {
 void Fiber::block_yield() {
     Fiber* current = current_fiber_;
     assert(current && "No current fiber");
+    // LOG_INFO("Blocking fiber:{}", current->getId());
 
-    // 只有在不是DONE状态时才设置为SUSPENDED
+    // 只有在不是DONE状态时才设置为 BLOCKED
     if (current->state_ != FiberState::DONE) {
         current->state_ = FiberState::BLOCKED;
     }
@@ -98,16 +101,19 @@ void Fiber::block_yield() {
 }
 
 void Fiber::yield_internal(Fiber *current) {
-    // 只有为DONE状态时才清除parent ptr
     auto parent_fiber = current->parent_fiber_;
-    if (current->state_ == FiberState::DONE) {
-        current->parent_fiber_ = nullptr;
-    }
+    current->parent_fiber_ = nullptr;
+    // 只有为DONE状态时才清除parent ptr
+    // if (current->state_ == FiberState::DONE) {
+    //     current->parent_fiber_ = nullptr;
+    // }
 
     // LOG_DEBUG("[do_yield] yielding from {}", current->getId());
-    assert(parent_fiber && "parent_fiber must be not null");
+    // assert(parent_fiber && "parent_fiber must be not null");
     SetCurrentFiberPtr(parent_fiber);
     parent_fiber->state_ = FiberState::RUNNING;
+    // auto main_fiber = GetMainFiber();
+    // SetCurrentFiberPtr(main_fiber);
     current->context_->switchTo(parent_fiber->context_.get());
 }
 
@@ -119,8 +125,11 @@ void Fiber::setState(FiberState state) {
     state_ = state;
 }
 
-uint64_t Fiber::getId() const {
-    return id_;
+uint64_t Fiber::getId() const { return id_; }
+
+Fiber::ptr Fiber::getParentFiber() {
+    // return parent_fiber_;
+    return nullptr;
 }
 
 void Fiber::fiberEntry() {
@@ -147,8 +156,8 @@ Fiber::ptr Fiber::GetMainFiber() {
 // Go语义接口实现
 // =========================
 
-void Fiber::go(FiberFunction func) {
-    auto fiber = Fiber::create(std::move(func));
+void Fiber::go(FiberFunction func, size_t stack_size) {
+    auto fiber = Fiber::create(std::move(func), stack_size);
     fiber->setRunMode(RunMode::SCHEDULED);
     
     // 获取多线程调度器并立即调度
@@ -188,9 +197,14 @@ Fiber::ptr Fiber::GetCurrentFiberPtr() {
     return current_fiber_weak_.lock();  // 安全地转换为shared_ptr
 }
 
-void Fiber::SetCurrentFiberPtr(const ptr& fiber) {
-    current_fiber_ = fiber.get();      // 设置裸指针用于快速访问
-    current_fiber_weak_ = fiber;       // 设置weak_ptr用于安全获取shared_ptr
+void Fiber::SetCurrentFiberPtr(const ptr &fiber) {
+    current_fiber_ = fiber.get(); // 设置裸指针用于快速访问
+    current_fiber_weak_ = fiber; // 设置weak_ptr用于安全获取shared_ptr
+}
+
+void Fiber::ResetMainFiber() {
+    main_fiber_ = {};
+    SetCurrentFiberPtr({});
 }
 
 } // namespace fiber

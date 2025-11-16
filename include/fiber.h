@@ -1,16 +1,19 @@
 #ifndef FIBER_FIBER_H
 #define FIBER_FIBER_H
 
-#include <stdint.h>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <thread>
-#include <chrono>
+
+#include "context.h"
+#include "logger.h"
 
 namespace fiber {
 
 class Context;
 class Scheduler;
+class AsmContext;
 
 enum class FiberState {
     READY,
@@ -24,6 +27,7 @@ enum class FiberState {
 class Fiber : public std::enable_shared_from_this<Fiber> {
 public:
     friend class Scheduler;
+    friend class AsmContext;
     using ptr = std::shared_ptr<Fiber>;
     using FiberFunction = std::function<void()>;
     
@@ -40,6 +44,8 @@ public:
     void setState(FiberState state);
 
     uint64_t getId() const;
+
+    Fiber::ptr getParentFiber();
     
     // =========================
     // Lua语义接口 (手动控制)
@@ -50,10 +56,11 @@ public:
      * @param func 要执行的函数
      * @return fiber指针
      */
-    static Fiber::ptr create(FiberFunction func) {
+    static Fiber::ptr create(FiberFunction func, size_t stack_size = UContext::DEFAULT_STACK_SIZE) {
         auto fiber = std::shared_ptr<Fiber>(new Fiber(std::move(func)));
-        fiber->Init();
+        fiber->Init(stack_size);
         fiber->setRunMode(RunMode::MANUAL);
+        // LOG_INFO("Fiber:{} created", fiber->getId());
         return fiber;
     }
     
@@ -75,7 +82,7 @@ public:
      * 立即在多线程中开始执行
      * @param func 要执行的函数
      */
-    static void go(FiberFunction func);
+    static void go(FiberFunction func, size_t stack_size = UContext::DEFAULT_STACK_SIZE);
 
     /**
      * 获取工作线程数量
@@ -100,6 +107,8 @@ public:
      */
     static void SetCurrentFiberPtr(const ptr& fiber);
 
+    static void ResetMainFiber();
+
     ~Fiber();
 
 private:
@@ -107,10 +116,10 @@ private:
 
     Fiber(const Fiber&) = delete;
     Fiber& operator=(const Fiber&) = delete;
-    Fiber(Fiber&&) = default;
-    Fiber& operator=(Fiber&&) = default;
+    Fiber(Fiber&&) = delete;
+    Fiber& operator=(Fiber&&) = delete;
 
-    void Init();
+    void Init(size_t stack_size = UContext::DEFAULT_STACK_SIZE);
     static void fiberEntry();
     static void yield_internal(Fiber *current);
 
@@ -129,7 +138,7 @@ private:
     static uint64_t generateId();
     static Fiber::ptr GetMainFiber();
     static thread_local Fiber::ptr main_fiber_;
-    static thread_local Fiber* current_fiber_;
+    static thread_local Fiber *current_fiber_;
     static thread_local std::weak_ptr<Fiber> current_fiber_weak_;
 };
 

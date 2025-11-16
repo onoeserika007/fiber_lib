@@ -59,15 +59,15 @@ std::size_t WaitQueue::notify_all() {
 }
 
 void WaitQueue::push_back_lockfree(Fiber::ptr fiber) {
-    lock_free_queue_.push_back_lockfree(fiber);
+    lock_free_queue_.enqueue(fiber);
 }
 
 Fiber::ptr WaitQueue::pop_front_lockfree() {
-    return lock_free_queue_.pop_front_lockfree().value_or(nullptr);
-}
-
-bool WaitQueue::empty() const {
-    return lock_free_queue_.empty();
+    Fiber::ptr out;
+    if (lock_free_queue_.try_dequeue(out)) {
+        return out;
+    }
+    return nullptr;
 }
 
 } // namespace fiber
