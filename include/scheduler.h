@@ -85,18 +85,18 @@ private:
  * 效果：整个main函数内容在多线程调度器的协程中运行
  */
 #define FIBER_MAIN()                                          \
-int __fiber_main_impl();                                      \
+int __fiber_main_impl(int argc, char** argv);                                      \
 int main(int argc, char** argv) {                             \
     (void)argc; (void)argv;                                   \
     std::atomic<int> exit_code{0};                           \
-    fiber::Fiber::go([&exit_code]() {                        \
-        int ret = __fiber_main_impl();                        \
+    fiber::Fiber::go([&exit_code, argc, argv]() {                        \
+        int ret = __fiber_main_impl(argc, argv);                        \
         exit_code.store(ret);                                 \
         fiber::Scheduler::GetScheduler().stop();            \
-    });                                                       \
+    }, 64 * 1024 * 1024);                                                       \
     fiber::Scheduler::GetScheduler().run();                 \
     return exit_code.load();                                  \
 }                                                             \
-int __fiber_main_impl()
+int __fiber_main_impl(int argc, char** argv)
 
 #endif // FIBER_SCHEDULER_H

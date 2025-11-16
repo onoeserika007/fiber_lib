@@ -5,11 +5,13 @@
 #ifndef FIBER_TIMER_H
 #define FIBER_TIMER_H
 
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <memory>
 #include <vector>
-#include <atomic>
+
+#include "concurrentqueue.h"
 #include "lockfree_queue.h"
 
 namespace fiber {
@@ -158,7 +160,7 @@ private:
     size_t current_slot_;                       // 当前slot索引
     
     // 待添加队列（多线程安全）
-    LockFreeQueue<TimerPtr> pending_timers_;    // 待添加的定时器队列
+    moodycamel::ConcurrentQueue<TimerPtr> pending_timers_;    // 待添加的定时器队列
     
     // 运行状态
     std::atomic<bool> running_;

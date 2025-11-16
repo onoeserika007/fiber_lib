@@ -1,11 +1,11 @@
 #include "io_fiber.h"
-#include "fiber.h"
-#include "logger.h"
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
 #include <fcntl.h>
 #include <unistd.h>
-#include <cerrno>
-#include <cstring>
-#include <cstdint>
+#include "fiber.h"
+#include "logger.h"
 
 namespace fiber {
 
@@ -38,7 +38,7 @@ std::optional<ssize_t> IO::doIO(int fd, IOEvent event, Func&& op, int64_t timeou
             [timeout_state, woken_state, &io_manager, fd, event]() {
                 timeout_state->store(true, std::memory_order_release);
                 if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
-                    io_manager.cancelEvent(fd, event);
+                    io_manager.wakeUp(fd, event);
                 }
             }, false);
     }
@@ -57,7 +57,7 @@ std::optional<ssize_t> IO::doIO(int fd, IOEvent event, Func&& op, int64_t timeou
 
         // success or failed not for waiting more data(EAGAIN | EWOULDBLOCK) or wait for connecting, complete this IO
         if (result >= 0
-            || errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS && errno != EALREADY) {
+            || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS && errno != EALREADY)) {
             if (timer && !woken_state->exchange(true, std::memory_order_acq_rel)) {
                 timer_wheel.cancel(timer);
             }
@@ -84,7 +84,14 @@ std::optional<ssize_t> IO::doIO(int fd, IOEvent event, Func&& op, int64_t timeou
         }
 
         // LOG_INFO("fd:{} is going to block", fd);
-        Fiber::block_yield();
+        auto fd_context = io_manager.getFdContext(fd);
+        assert(fd_context && "fd_context must exist");
+
+        if (event == IOEvent::READ) {
+            fd_context->read_waiters->wait();
+        } else if (event == IOEvent::WRITE) {
+            fd_context->write_waiters->wait();
+        }
         
         io_manager.delEvent(fd, event);
         
@@ -184,7 +191,7 @@ void IO::close(int fd) {
     
     // 先取消fd上的所有事件，唤醒等待的fiber
     auto& io_manager = IOManager::getInstance();
-    io_manager.cancelAll(fd);
+    io_manager.delAll(fd);
     
     // 再关闭fd
     ::close(fd);

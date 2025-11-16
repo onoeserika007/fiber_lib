@@ -1,9 +1,10 @@
 #ifndef FIBER_WAIT_QUEUE_H
 #define FIBER_WAIT_QUEUE_H
 
-#include <memory>
 #include <atomic>
+#include <memory>
 #include <vector>
+#include "concurrentqueue.h"
 #include "fiber.h"
 #include "lockfree_linked_queue.h"
 
@@ -47,12 +48,7 @@ public:
      * @return 被唤醒的协程数量
      */
     size_t notify_all();
-    
-    /**
-     * @brief 检查是否为空（非线程安全，仅用于调试）
-     */
-    bool empty() const;
-    
+
     void push_back_lockfree(Fiber::ptr fiber);
 
 private:
@@ -60,7 +56,7 @@ private:
     // 从队列头部取出节点
     Fiber::ptr pop_front_lockfree();
 
-    LockFreeLinkedList<Fiber::ptr> lock_free_queue_;
+    moodycamel::ConcurrentQueue<Fiber::ptr> lock_free_queue_;
 };
 
 } // namespace fiber

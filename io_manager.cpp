@@ -45,31 +45,38 @@ void IOManager::shutdown() {
     LOG_DEBUG("IOManager shutdown");
 }
 
-IOManager::FdContext* IOManager::getFdContext(int fd) {
-    auto it = fd_contexts_.find(fd);
-    if (it != fd_contexts_.end()) {
-        return it->second.get();
+// must in critical zone
+IOManager::FdContextPtr IOManager::getOrCreateFdContext(int fd) {
+    auto ctx = fd_contexts_[fd].load(std::memory_order_relaxed);
+    if (ctx) {
+        return ctx;
     }
     
-    auto ctx = std::make_unique<FdContext>();
+    ctx = std::make_shared<FdContext>();
     ctx->read_waiters = std::make_unique<WaitQueue>();
     ctx->write_waiters = std::make_unique<WaitQueue>();
-    auto* ptr = ctx.get();
-    fd_contexts_[fd] = std::move(ctx);
-    return ptr;
+    fd_contexts_[fd].store(std::move(ctx), std::memory_order_relaxed);
+    return fd_contexts_[fd];
 }
+
+auto IOManager::getFdContext(int fd) const -> FdContextPtr {
+    return fd_contexts_[fd].load(std::memory_order_relaxed);
+}
+
+
 
 bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     if (!running_.load(std::memory_order_acquire)) {
         return false;
     }
 
+    // LOG_DEBUG("[IOManager] Add Events, fd:{}, getting latch", fd);
     std::lock_guard latch_ {mu_};
     
-    auto* ctx = getFdContext(fd);
+    auto ctx = getOrCreateFdContext(fd);
     uint32_t old_events = ctx->events;
     uint32_t new_events = old_events | static_cast<uint32_t>(event);
-    // LOG_DEBUG("[IOManager] Add Events, fd={}, old_events={}, new_events={}", fd, old_events, new_events);
+    // LOG_INFO("[IOManager] Add Events, fd:{}, old_events={}, new_events={}", fd, old_events, new_events);
     
     epoll_event ep_event;
     memset(&ep_event, 0, sizeof(ep_event));
@@ -84,12 +91,13 @@ bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     }
     
     ctx->events = new_events;
-    
-    if (event == IOEvent::READ) {
-        ctx->read_waiters->push_back_lockfree(fiber);
-    } else if (event == IOEvent::WRITE) {
-        ctx->write_waiters->push_back_lockfree(fiber);
-    }
+
+    // duplicate
+    // if (event == IOEvent::READ) {
+    //     ctx->read_waiters->push_back_lockfree(fiber);
+    // } else if (event == IOEvent::WRITE) {
+    //     ctx->write_waiters->push_back_lockfree(fiber);
+    // }
     
     return true;
 }
@@ -99,14 +107,16 @@ bool IOManager::delEvent(int fd, IOEvent event) {
         return false;
     }
 
+    // LOG_DEBUG("[IOManager] Del Events, fd:{}, getting latch", fd);
     std::lock_guard latch_ {mu_};
+
     
-    auto it = fd_contexts_.find(fd);
-    if (it == fd_contexts_.end()) {
+    auto ctx = fd_contexts_[fd].load(std::memory_order_acquire);
+
+    if (!ctx) {
         return false;
     }
-    
-    auto* ctx = it->second.get();
+
     uint32_t old_events = ctx->events;
     uint32_t new_events = old_events & ~static_cast<uint32_t>(event);
     // LOG_DEBUG("[IOManager] Del Event, fd={}, old_events={}, new_events={}", fd, old_events, new_events);
@@ -126,13 +136,15 @@ bool IOManager::delEvent(int fd, IOEvent event) {
     ctx->events = new_events;
     
     if (new_events == 0) {
-        fd_contexts_.erase(it);
+        fd_contexts_[fd].store(nullptr, std::memory_order_release);
     }
     
     return true;
 }
 
-bool IOManager::cancelEvent(int fd, IOEvent event) {
+// TODO cancel
+// event不应该通知吧？想想通知的场景，应该是超时了才会触发，不超时提前取消说明已经不阻塞了
+bool IOManager::wakeUp(int fd, IOEvent event) {
     // 先唤醒等待的fiber（通知它们事件被取消），再删除epoll注册
     // 顺序很重要：delEvent可能删除FdContext，导致triggerEvent找不到
     triggerEvent(fd, event);
@@ -140,21 +152,19 @@ bool IOManager::cancelEvent(int fd, IOEvent event) {
     return true;
 }
 
-void IOManager::cancelAll(int fd) {
+void IOManager::delAll(int fd) {
     // 取消所有可能的事件：READ | WRITE
-    cancelEvent(fd, static_cast<IOEvent>(EPOLLIN | EPOLLOUT));
+    delEvent(fd, static_cast<IOEvent>(EPOLLIN | EPOLLOUT));
 }
 
 void IOManager::triggerEvent(int fd, IOEvent event) {
 
     std::lock_guard latch_ {mu_};
 
-    auto it = fd_contexts_.find(fd);
-    if (it == fd_contexts_.end()) {
+    auto ctx = fd_contexts_[fd].load(std::memory_order_acquire);
+    if (!ctx) {
         return;
     }
-    
-    auto* ctx = it->second.get();
     
     uint32_t events = static_cast<uint32_t>(event);
     if (events & EPOLLIN) {
@@ -196,21 +206,22 @@ void IOManager::processEvents(int timeout_ms) {
 
     total_events_ += n;
     // LOG_INFO("Epoll received {} events: {}, total {}", n, events_to_string(events, n), total_events_);
-    // LOG_INFO("History fd size:{}", history_fd_.size());
     // LOG_INFO("Fd Contexts size:{}", fd_contexts_.size());
     // LOG_INFO("Add Events call counts:{}", add_events_call_counts_);
     
     for (int i = 0; i < n; ++i) {
         int fd = events[i].data.fd;
         uint32_t revents = events[i].events;
-        
-        auto it = fd_contexts_.find(fd);
-        if (it == fd_contexts_.end()) {
+
+        // TODO unordered_map并发不安全，
+        /*任何两个线程，只要有一个线程对容器做写操作，另一个线程同时访问该容器就是未定义行为。*/
+        // 1.改成vector一张大表
+        // 2.改成向工作线程发送信号
+        auto ctx = fd_contexts_[fd].load(std::memory_order_acquire);
+        if (!ctx) {
             LOG_WARN("fd:{} cannot find fd context, event may have lost", fd);
             continue;
         }
-        
-        auto* ctx = it->second.get();
         
         if (revents & (EPOLLIN | EPOLLHUP | EPOLLERR)) {
             ctx->read_waiters->notify_all();
