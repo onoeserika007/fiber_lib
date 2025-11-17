@@ -41,6 +41,7 @@ void Fiber::Init(size_t stack_size) {
 
     // non-main fiber 需要先初始化一片上下文以供切换
     context_ = AsmContext::createContext(stack_size);
+    // LOG_DEBUG("[Fiber::Init] Initializing fiber");
     context_->initialize(&Fiber::fiberEntry);
 
     // LOG_DEBUG("Fiber created with ID: {}", id_);  // 过于频繁，注释掉
@@ -108,7 +109,7 @@ void Fiber::yield_internal(Fiber *current) {
     //     current->parent_fiber_ = nullptr;
     // }
 
-    // LOG_DEBUG("[do_yield] yielding from {}", current->getId());
+    // LOG_INFO("[yield_internal] yielding from {}", current->getId());
     // assert(parent_fiber && "parent_fiber must be not null");
     SetCurrentFiberPtr(parent_fiber);
     parent_fiber->state_ = FiberState::RUNNING;
@@ -132,10 +133,11 @@ Fiber::ptr Fiber::getParentFiber() {
     return nullptr;
 }
 
+
 void Fiber::fiberEntry() {
     auto current = current_fiber_;
     assert(current && "No current fiber in fiberEntry");
-    
+
     if (current->func_) {
         current->func_();
     }
@@ -163,6 +165,14 @@ void Fiber::go(FiberFunction func, size_t stack_size) {
     // 获取多线程调度器并立即调度
     auto&& scheduler = Scheduler::GetScheduler();
     scheduler.scheduleImmediate(fiber);
+}
+
+Fiber::ptr Fiber::create(FiberFunction func, size_t stack_size) {
+    auto fiber = std::shared_ptr<Fiber>(new Fiber(std::move(func)));
+    fiber->Init(stack_size);
+    fiber->setRunMode(RunMode::MANUAL);
+    // LOG_INFO("Fiber:{} created", fiber->getId());
+    return fiber;
 }
 
 int Fiber::getWorkerCount() {

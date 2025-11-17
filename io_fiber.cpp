@@ -79,14 +79,14 @@ std::optional<ssize_t> IO::doIO(int fd, IOEvent event, Func&& op, int64_t timeou
             if (timer && !woken_state->exchange(true, std::memory_order_acq_rel)) {
                 timer_wheel.cancel(timer);
             }
-            // LOG_INFO("fd:{} Get IO AddEvent Failed, return", fd);
+            LOG_ERROR("fd:{} Get IO AddEvent Failed, return", fd);
             return std::nullopt;
         }
 
-        // LOG_INFO("fd:{} is going to block", fd);
         auto fd_context = io_manager.getFdContext(fd);
         assert(fd_context && "fd_context must exist");
 
+        // LOG_INFO("fd:{} is going to block", fd);
         if (event == IOEvent::READ) {
             fd_context->read_waiters->wait();
         } else if (event == IOEvent::WRITE) {

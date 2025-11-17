@@ -83,14 +83,13 @@ Scheduler &Scheduler::GetScheduler() {
 // 多线程调度方法
 void Scheduler::scheduleImmediate(Fiber::ptr fiber) {
     if (state_ != SchedulerState::RUNNING) {
+        LOG_WARN("[Scheduler] pushing fiber when scheduler is not setup, loss fiber!");
         return;
     }
 
-    // 如果fiber已经完成，直接忽略（这是正常情况，不是错误）
-    if (fiber->getState() == FiberState::DONE) {
-        return;
-    }
+    assert(fiber->getState() != FiberState::DONE && "Scheduling a DONE fiber! This means you got multiple source of a fiber, which is definitely wrong.");
 
+    // LOG_INFO("Scheduling fiber {}", fiber->getId());
     for (;;) {
         FiberConsumer* consumer = selectConsumer();
         if (!consumer) {

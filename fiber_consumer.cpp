@@ -43,6 +43,7 @@ void FiberConsumer::stop() {
 
 bool FiberConsumer::schedule(Fiber::ptr fiber) {
     if (!running_.load(std::memory_order_acquire)) {
+        LOG_WARN("[FiberConsumer] pushing fiber when FiberConsumer is not setup, loss fiber!");
         return true;
     }
     
@@ -70,6 +71,7 @@ void FiberConsumer::processTask() {
     // Lock-free地从队列获取任务
     Fiber::ptr task {};
     if (!queue_->try_dequeue(task)) {
+        // std::this_thread::sleep_for(std::chrono::duration<int64_t, std::milli>(20));
         std::this_thread::yield();
         return;
     }
@@ -77,6 +79,8 @@ void FiberConsumer::processTask() {
     if (!task) {
         return;
     }
+
+    // LOG_INFO("[FiberConsumer::processTask] resuming a fiber");
 
     // auto parent_fiber = task->getParentFiber();
     // assert(parent_fiber.get() == nullptr && "A scheduling fiber can't have parent!");

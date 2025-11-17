@@ -56,13 +56,8 @@ public:
      * @param func 要执行的函数
      * @return fiber指针
      */
-    static Fiber::ptr create(FiberFunction func, size_t stack_size = UContext::DEFAULT_STACK_SIZE) {
-        auto fiber = std::shared_ptr<Fiber>(new Fiber(std::move(func)));
-        fiber->Init(stack_size);
-        fiber->setRunMode(RunMode::MANUAL);
-        // LOG_INFO("Fiber:{} created", fiber->getId());
-        return fiber;
-    }
+    static Fiber::ptr create(FiberFunction func, size_t stack_size = UContext::DEFAULT_STACK_SIZE);
+
     
     /**
      * 检查fiber是否已完成

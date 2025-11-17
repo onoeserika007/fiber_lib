@@ -26,6 +26,8 @@ public:
         std::unique_ptr<WaitQueue> read_waiters;
         std::unique_ptr<WaitQueue> write_waiters;
         uint32_t events{0};
+
+        fiber::SpinLock fd_mu;
     };
 
     using IOCallback = std::function<void()>;
@@ -58,6 +60,7 @@ private:
     void triggerEvent(int fd, IOEvent event);
 
     std::string events_to_string(epoll_event events[], int n);
+    int getFdContextNum() const;
     int total_events_ = 0;
     int add_events_call_counts_ = 0;
     std::unordered_set<int> history_fd_ {};

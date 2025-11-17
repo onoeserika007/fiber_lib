@@ -130,6 +130,7 @@ enum {
 // hig | regs[13]: rsp |
 
 enum {
+    kR15 = 0,
     kRDI = 7,
     kRSI = 8,
     kRETAddr = 9,
@@ -220,6 +221,7 @@ void AsmContext::initialize(void (*func)()) {
 
     // 2. 设置返回地址 (压栈)
     auto func_addr = reinterpret_cast<void *>(&fiber_trampoline);
+    // LOG_INFO("[AsmContext::initialize] fiber_trampoline addr:{}", reinterpret_cast<uint64_t>(&fiber_trampoline));
     *reinterpret_cast<void **>(sp) = func_addr;
 
     // 3. 初始化寄存器状态 (完全复制 libco 逻辑)
@@ -241,7 +243,14 @@ void AsmContext::switchTo(Context *to) {
         // save to this, and switch to ctx
         // LOG_INFO("Jumping to {}", ctx->context_.regs[kRETAddr]);
         assert(ctx->context_.regs[kRETAddr] != 0 && "Invalid ret addr");
+        // if (ctx->context_.regs[kR15] == nullptr) {
+        //     LOG_INFO("Switch to a new, addr:{}", reinterpret_cast<uint64_t>(ctx->context_.regs[kRETAddr]));
+        // } else {
+        //     LOG_INFO("Switch to a old fiber, addr:{}", reinterpret_cast<uint64_t>(ctx->context_.regs[kRETAddr]));
+        // }
         coctx_swap(&context_, &ctx->context_);
+    } else {
+        LOG_ERROR("Switch to type cast failed.");
     }
 }
 

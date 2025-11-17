@@ -182,105 +182,85 @@ private:
     void notify_waiters_if_done();
 };
 
-/**
- * @brief RAII风格的协程锁守护
- */
-template<typename Mutex>
-class lock_guard {
-public:
-    explicit lock_guard(Mutex& mutex) : mutex_(mutex) {
-        mutex_.lock();
-    }
-    
-    ~lock_guard() {
-        mutex_.unlock();
-    }
-    
-    // 禁用拷贝和移动
-    lock_guard(const lock_guard&) = delete;
-    lock_guard& operator=(const lock_guard&) = delete;
+#ifndef CACHE_LINE_SIZE
+#define CACHE_LINE_SIZE 64
+#endif
 
+class alignas(CACHE_LINE_SIZE) SpinLock {
 private:
-    Mutex& mutex_;
-};
+    // 使用 atomic<bool> 而不是 atomic_flag，以便支持更多操作
+    std::atomic<bool> lock_ = false;
 
-/**
- * @brief 协程版本的unique_lock
- */
-template<typename Mutex>
-class unique_lock {
+    // 防止伪共享（False Sharing）
+    char padding_[CACHE_LINE_SIZE - sizeof(std::atomic<bool>)]{};
+
+    // 自旋策略参数
+    static constexpr uint32_t kMaxSpins = 50;   // 初始快速自旋次数
+    static constexpr uint32_t kMaxYields = 10;  // yield 尝试次数
+
 public:
-    unique_lock() : mutex_(nullptr), owns_lock_(false) {}
-    
-    explicit unique_lock(Mutex& mutex) : mutex_(&mutex), owns_lock_(false) {
-        lock();
-    }
-    
-    ~unique_lock() {
-        if (owns_lock_) {
-            unlock();
-        }
-    }
-    
-    // 移动构造和赋值
-    unique_lock(unique_lock&& other) noexcept 
-        : mutex_(other.mutex_), owns_lock_(other.owns_lock_) {
-        other.mutex_ = nullptr;
-        other.owns_lock_ = false;
-    }
-    
-    unique_lock& operator=(unique_lock&& other) noexcept {
-        if (this != &other) {
-            if (owns_lock_) {
-                unlock();
+    // 满足 BasicLockable 概念（std::lock_guard 要求）
+    void lock() noexcept {
+        // 1. 快速路径：尝试一次获取锁
+        for (uint32_t i = 0; i < kMaxSpins; ++i) {
+            if (try_lock()) {
+                return;
             }
-            mutex_ = other.mutex_;
-            owns_lock_ = other.owns_lock_;
-            other.mutex_ = nullptr;
-            other.owns_lock_ = false;
+            // CPU 友好自旋（x86 上的 PAUSE 指令）
+            cpu_relax();
         }
-        return *this;
+
+        // 2. 中期：尝试 yield，给其他线程机会
+        for (uint32_t i = 0; i < kMaxYields; ++i) {
+            if (try_lock()) {
+                return;
+            }
+            std::this_thread::yield();
+        }
+
+        // 3. 长期等待：持续自旋直到获取锁
+        while (!try_lock()) {
+            cpu_relax();
+        }
     }
-    
-    // 禁用拷贝
-    unique_lock(const unique_lock&) = delete;
-    unique_lock& operator=(const unique_lock&) = delete;
-    
-    void lock() {
-        if (!mutex_) throw std::system_error(std::make_error_code(std::errc::operation_not_permitted));
-        if (owns_lock_) throw std::system_error(std::make_error_code(std::errc::resource_deadlock_would_occur));
-        
-        mutex_->lock();
-        owns_lock_ = true;
+
+    // 满足 BasicLockable 概念
+    void unlock() noexcept {
+        // 使用 release 内存序确保临界区操作对其他线程可见
+        lock_.store(false, std::memory_order_release);
     }
-    
-    bool try_lock() {
-        if (!mutex_) throw std::system_error(std::make_error_code(std::errc::operation_not_permitted));
-        if (owns_lock_) throw std::system_error(std::make_error_code(std::errc::resource_deadlock_would_occur));
-        
-        owns_lock_ = mutex_->try_lock();
-        return owns_lock_;
+
+    // 尝试获取锁（无等待）
+    bool try_lock() noexcept {
+        // 使用 acquire 内存序确保后续操作不会重排到锁之前
+        return !lock_.exchange(true, std::memory_order_acquire);
     }
-    
-    void unlock() {
-        if (!owns_lock_) throw std::system_error(std::make_error_code(std::errc::operation_not_permitted));
-        
-        mutex_->unlock();
-        owns_lock_ = false;
-    }
-    
-    bool owns_lock() const noexcept { return owns_lock_; }
-    
-    Mutex* mutex() const noexcept { return mutex_; }
 
 private:
-    Mutex* mutex_;
-    bool owns_lock_;
+    // CPU 友好自旋（减少功耗，提高性能）
+    static void cpu_relax() noexcept {
+        // x86/x64 特定优化：PAUSE 指令
+#if defined(__x86_64__) || defined(_M_X64)
+        __asm__ volatile("pause" ::: "memory");
+#elif defined(__aarch64__) || defined(__arm__)
+        // ARM 特定优化
+        __asm__ volatile("yield" ::: "memory");
+#else
+        // 通用实现：编译器屏障
+        std::atomic_thread_fence(std::memory_order_relaxed);
+#endif
+    }
+
+public:
+    // 禁止拷贝和移动
+    SpinLock(const SpinLock&) = delete;
+    SpinLock& operator=(const SpinLock&) = delete;
+
+    // 构造函数和析构函数
+    constexpr SpinLock() noexcept = default;
+    ~SpinLock() = default;
 };
 
-// 类型别名，方便使用
-using fiber_lock_guard = lock_guard<FiberMutex>;
-using fiber_unique_lock = unique_lock<FiberMutex>;
 
 } // namespace fiber
 

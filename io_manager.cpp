@@ -45,25 +45,37 @@ void IOManager::shutdown() {
     LOG_DEBUG("IOManager shutdown");
 }
 
-// must in critical zone
+// atomic
 IOManager::FdContextPtr IOManager::getOrCreateFdContext(int fd) {
-    auto ctx = fd_contexts_[fd].load(std::memory_order_relaxed);
+    // 1st check: fast path
+    auto ctx = fd_contexts_[fd].load(std::memory_order_acquire);
     if (ctx) {
         return ctx;
     }
-    
-    ctx = std::make_shared<FdContext>();
-    ctx->read_waiters = std::make_unique<WaitQueue>();
-    ctx->write_waiters = std::make_unique<WaitQueue>();
-    fd_contexts_[fd].store(std::move(ctx), std::memory_order_relaxed);
-    return fd_contexts_[fd];
+
+    // Prepare a new context (not yet published)
+    auto new_ctx = std::make_shared<FdContext>();
+    new_ctx->read_waiters = std::make_unique<WaitQueue>();
+    new_ctx->write_waiters = std::make_unique<WaitQueue>();
+
+    // 2nd check + CAS
+    std::shared_ptr<FdContext> expected = nullptr;  // must be null
+    if (fd_contexts_[fd].compare_exchange_strong(
+            expected,
+            new_ctx,
+            std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+        // CAS 成功，new_ctx 被放入表中
+        return new_ctx;
+    }
+
+    // CAS 失败，说明别人已经成功创建了，expected 会被写为当前实际值
+    return expected;
 }
 
 auto IOManager::getFdContext(int fd) const -> FdContextPtr {
     return fd_contexts_[fd].load(std::memory_order_relaxed);
 }
-
-
 
 bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     if (!running_.load(std::memory_order_acquire)) {
@@ -71,9 +83,10 @@ bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     }
 
     // LOG_DEBUG("[IOManager] Add Events, fd:{}, getting latch", fd);
-    std::lock_guard latch_ {mu_};
-    
     auto ctx = getOrCreateFdContext(fd);
+
+    std::unique_lock fd_lock {ctx->fd_mu};
+
     uint32_t old_events = ctx->events;
     uint32_t new_events = old_events | static_cast<uint32_t>(event);
     // LOG_INFO("[IOManager] Add Events, fd:{}, old_events={}, new_events={}", fd, old_events, new_events);
@@ -91,13 +104,6 @@ bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     }
     
     ctx->events = new_events;
-
-    // duplicate
-    // if (event == IOEvent::READ) {
-    //     ctx->read_waiters->push_back_lockfree(fiber);
-    // } else if (event == IOEvent::WRITE) {
-    //     ctx->write_waiters->push_back_lockfree(fiber);
-    // }
     
     return true;
 }
@@ -107,8 +113,7 @@ bool IOManager::delEvent(int fd, IOEvent event) {
         return false;
     }
 
-    // LOG_DEBUG("[IOManager] Del Events, fd:{}, getting latch", fd);
-    std::lock_guard latch_ {mu_};
+    // LOG_INFO("[IOManager] Del Events, fd:{}, getting latch", fd);
 
     
     auto ctx = fd_contexts_[fd].load(std::memory_order_acquire);
@@ -117,6 +122,7 @@ bool IOManager::delEvent(int fd, IOEvent event) {
         return false;
     }
 
+    std::unique_lock fd_lock {ctx->fd_mu};
     uint32_t old_events = ctx->events;
     uint32_t new_events = old_events & ~static_cast<uint32_t>(event);
     // LOG_DEBUG("[IOManager] Del Event, fd={}, old_events={}, new_events={}", fd, old_events, new_events);
@@ -159,8 +165,6 @@ void IOManager::delAll(int fd) {
 
 void IOManager::triggerEvent(int fd, IOEvent event) {
 
-    std::lock_guard latch_ {mu_};
-
     auto ctx = fd_contexts_[fd].load(std::memory_order_acquire);
     if (!ctx) {
         return;
@@ -186,6 +190,9 @@ std::string IOManager::events_to_string(epoll_event events[], int n) {
     }
     os << "]";
     return os.str();
+}
+
+int IOManager::getFdContextNum() const {
 }
 
 void IOManager::processEvents(int timeout_ms) {
@@ -224,6 +231,7 @@ void IOManager::processEvents(int timeout_ms) {
         }
         
         if (revents & (EPOLLIN | EPOLLHUP | EPOLLERR)) {
+            // LOG_INFO("Waking up a reader:{}", fd);
             ctx->read_waiters->notify_all();
         }
         
