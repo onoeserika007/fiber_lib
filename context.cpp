@@ -191,7 +191,8 @@ int coctx_init(coctx_t* ctx) {
 AsmContext::AsmContext(size_t stack_size) {
     stack_ = nullptr;
     stack_size_ = stack_size;
-    memset(&context_, 0, sizeof(context_));
+    // bullshit c init
+    // memset(&context_, 0, sizeof(context_));
 }
 
 AsmContext::~AsmContext() {
@@ -212,6 +213,7 @@ void AsmContext::initialize(void (*func)()) {
 
     context_.ss_sp = static_cast<char *>(stack_);
     context_.ss_size = stack_size_;
+    context_.can_enter.store(false);
     //
     // coctx_make(&context_, reinterpret_cast<coctx_pfn_t>(&fiber_trampoline), nullptr, nullptr);
 
@@ -248,6 +250,12 @@ void AsmContext::switchTo(Context *to) {
         // } else {
         //     LOG_INFO("Switch to a old fiber, addr:{}", reinterpret_cast<uint64_t>(ctx->context_.regs[kRETAddr]));
         // }
+        bool expected = true;
+        if (!context_.can_enter.compare_exchange_strong(expected, false, std::memory_order_release, std::memory_order_relaxed)) {
+            throw std::runtime_error("A fiber context loaded before it can be accessed!");
+        }
+
+        ctx->context_.can_enter.store(true);
         coctx_swap(&context_, &ctx->context_);
     } else {
         LOG_ERROR("Switch to type cast failed.");

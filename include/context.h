@@ -108,13 +108,13 @@ struct coctx_param_t
 struct coctx_t
 {
 #if defined(__i386__)
-    void *regs[ 8 ];
+    void *regs[ 8 ] = { nullptr };
 #else
-    void *regs[ 14 ];
+    void *regs[ 14 ] = { nullptr };
 #endif
-    size_t ss_size;
-    char *ss_sp;
-
+    size_t ss_size {};
+    char *ss_sp {};
+    std::atomic<bool> can_enter {true};
 };
 
 int coctx_init( coctx_t *ctx );
@@ -122,7 +122,7 @@ int coctx_make( coctx_t *ctx, coctx_pfn_t pfn, const void *s, const void *s1 );
 
 class AsmContext : public StackfulContext {
 public:
-    ~AsmContext();
+    ~AsmContext() override;
 
     // 禁止拷贝
     AsmContext(const AsmContext&) = delete;
@@ -144,7 +144,7 @@ public:
 private:
     AsmContext(size_t stack_size);
 
-    coctx_t context_;
+    coctx_t context_ {};
 };
 
 
