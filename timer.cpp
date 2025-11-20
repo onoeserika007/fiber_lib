@@ -3,8 +3,8 @@
 //
 
 #include "timer.h"
-#include "logger.h"
 #include <algorithm>
+#include "serika/basic/logger.h"
 
 namespace fiber {
 
@@ -33,7 +33,7 @@ TimerWheel::TimerWheel(size_t slots, Duration tick_interval)
     , tick_interval_(tick_interval)
     , wheel_(slots)
     , current_slot_(0)
-    , pending_timers_(1024)  // 待添加队列容量
+    // , pending_timers_(1024)  // 待添加队列容量
     , running_(true) {
     for (auto& slot : wheel_) {
         slot.reserve(16);
@@ -65,13 +65,15 @@ TimerWheel::TimerPtr TimerWheel::addTimer(uint64_t ms, Callback cb, bool repeat)
     timer->rotations = ticks / slots_;
 
     // 添加到待处理队列（无锁）
-    while (!pending_timers_.try_enqueue(timer)) {
-        // 队列满了，稍微等待
-        if (!running_.load(std::memory_order_acquire)) {
-            return nullptr;
-        }
-        // 可以yield或短暂自旋
-    }
+    // while (!pending_timers_.try_enqueue(timer)) {
+    //     // 队列满了，稍微等待
+    //     if (!running_.load(std::memory_order_acquire)) {
+    //         return nullptr;
+    //     }
+    //     // 可以yield或短暂自旋
+    // }
+
+    pending_timers_.push_back_lockfree(timer);
 
     return timer;
 }
@@ -204,7 +206,9 @@ void TimerWheel::processPendingTimers() {
     int processed = 0;
     const int max_batch = 100;  // 每次tick最多处理100个待添加定时器
 
-    while (processed < max_batch && pending_timers_.try_dequeue(timer)) {
+    // while (processed < max_batch && pending_timers_.try_dequeue(timer)) {
+    while (processed < max_batch && !pending_timers_.empty()) {
+        timer = pending_timers_.pop_front_lockfree().value_or(nullptr);
         if (!timer || timer->canceled.load(std::memory_order_acquire)) {
             ++processed;
             continue;

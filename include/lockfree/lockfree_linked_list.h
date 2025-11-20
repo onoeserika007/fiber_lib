@@ -80,6 +80,9 @@ public:
         return h == t;
     }
 
+    size_t size() const {
+        return size_.load(std::memory_order_relaxed);
+    }
 
     // std::atomic_compare_exchange_weak
     // "If the comparison fails, the value of expected is updated to the value held by the atomic object at the time
@@ -114,6 +117,7 @@ public:
             // if insert new node success, break
             if (tail_ptr->next.compare_exchange_weak(next, new_tail_next, std::memory_order_release,
                                                      std::memory_order_relaxed)) {
+                size_.fetch_add(1, std::memory_order_relaxed);
                 // they do the same thing
                 // step global tail
                 TaggedNodePtr new_tail{new_node, tail.get_next_tag()};
@@ -155,6 +159,7 @@ public:
             TaggedNodePtr new_head{next_ptr, head.get_next_tag()};
             // Normally dequeue, trying to move head
             if (head_.compare_exchange_weak(head, new_head, std::memory_order_release, std::memory_order_relaxed)) {
+                size_.fetch_sub(1, std::memory_order_relaxed);
                 result = std::move(next_ptr->data);
                 pool_.template destruct<true>(head);
                 break;
@@ -170,6 +175,9 @@ private:
 
     // obj pool
     PoolType pool_;
+
+    // size
+    std::atomic<size_t> size_ {};
 };
 
 } // namespace fiber

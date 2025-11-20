@@ -1,16 +1,18 @@
-#include "fiber_consumer.h"
-#include "scheduler.h"
-#include "logger.h"
+#include <chrono>
 #include <iostream>
 #include <thread>
-#include <chrono>
+
+#include "fiber_consumer.h"
+#include "serika/basic/logger.h"
+#include "scheduler.h"
 
 namespace fiber {
 
 FiberConsumer::FiberConsumer(int id, Scheduler* scheduler) 
     : id_(id)
     , scheduler_(scheduler)
-    , queue_(std::make_unique<moodycamel::ConcurrentQueue<std::shared_ptr<Fiber>>>()) {
+    // , queue_(std::make_unique<moodycamel::ConcurrentQueue<std::shared_ptr<Fiber>>>()) {
+    , queue_(std::make_unique<LockFreeLinkedList<std::shared_ptr<Fiber>>>()) {
 }
 
 FiberConsumer::~FiberConsumer() {
@@ -35,8 +37,11 @@ void FiberConsumer::stop() {
         thread_.join();
     }
 
-    Fiber::ptr task;
-    while (queue_->try_dequeue(task)) {
+    // Fiber::ptr task;
+    // while (queue_->try_dequeue(task)) {
+    //     task->resume();
+    // }
+    while (auto task = queue_->pop_front_lockfree().value_or(nullptr)) {
         task->resume();
     }
 }
@@ -49,10 +54,12 @@ bool FiberConsumer::schedule(Fiber::ptr fiber) {
     
     // 这里自旋的话会造成饥饿，因为分配任务的协程有可能是被选中的协程
     // 并发特别大的话就容易这样，因此需要把自旋挪到外面去
-    return queue_->try_enqueue(fiber);
+    // return queue_->try_enqueue(fiber);
+    queue_->push_back_lockfree(fiber);
+    return true;
 }
 
-size_t FiberConsumer::getQueueSize() const { return queue_->size_approx(); }
+size_t FiberConsumer::getQueueSize() const { return queue_->size(); }
 
 int FiberConsumer::id() const { return id_; }
 
@@ -70,13 +77,16 @@ void FiberConsumer::consumerLoop() {
 void FiberConsumer::processTask() {
     // Lock-free地从队列获取任务
     Fiber::ptr task {};
-    if (!queue_->try_dequeue(task)) {
-        // std::this_thread::sleep_for(std::chrono::duration<int64_t, std::milli>(20));
-        std::this_thread::yield();
-        return;
-    }
+    // if (!queue_->try_dequeue(task)) {
+    //     // std::this_thread::sleep_for(std::chrono::duration<int64_t, std::milli>(20));
+    //     std::this_thread::yield();
+    //     return;
+    // }
+
+    task = queue_->pop_front_lockfree().value_or(nullptr);
     
     if (!task) {
+        std::this_thread::yield();
         return;
     }
 

@@ -11,8 +11,7 @@
 #include <memory>
 #include <vector>
 
-#include "concurrentqueue.h"
-#include "lockfree_queue.h"
+#include "lockfree/lockfree_linked_list.h"
 
 namespace fiber {
 
@@ -160,7 +159,7 @@ private:
     size_t current_slot_;                       // 当前slot索引
     
     // 待添加队列（多线程安全）
-    moodycamel::ConcurrentQueue<TimerPtr> pending_timers_;    // 待添加的定时器队列
+    LockFreeLinkedList<TimerPtr> pending_timers_;    // 待添加的定时器队列
     
     // 运行状态
     std::atomic<bool> running_;

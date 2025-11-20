@@ -4,8 +4,8 @@
 #include <stdexcept>
 #include <sys/mman.h>
 
+#include "serika/basic/logger.h"
 #include "fiber.h"
-#include "logger.h"
 
 namespace fiber {
 

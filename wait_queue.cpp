@@ -1,5 +1,5 @@
-#include "include/wait_queue.h"
-#include "include/scheduler.h"
+#include "wait_queue.h"
+#include "scheduler.h"
 #include <cassert>
 #include <stdexcept>
 #include <iostream>
@@ -59,15 +59,17 @@ std::size_t WaitQueue::notify_all() {
 }
 
 void WaitQueue::push_back_lockfree(Fiber::ptr fiber) {
-    lock_free_queue_.enqueue(fiber);
+    lock_free_queue_.push_back_lockfree(fiber);
 }
 
 Fiber::ptr WaitQueue::pop_front_lockfree() {
-    Fiber::ptr out;
-    if (lock_free_queue_.try_dequeue(out)) {
-        return out;
-    }
-    return nullptr;
+    // Fiber::ptr out;
+    // if (lock_free_queue_.pop_front_lockfree(out)) {
+    //     return out;
+    // }
+    // return nullptr;
+
+    return lock_free_queue_.pop_front_lockfree().value_or(nullptr);
 }
 
 } // namespace fiber
