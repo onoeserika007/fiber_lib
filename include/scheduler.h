@@ -39,7 +39,7 @@ public:
     bool hasReadyFibers() const;
 
     // 多线程调度专用接口
-    void scheduleImmediate(Fiber::ptr fiber);  // 立即调度（多线程模式）
+    void scheduleImmediate(Fiber::ptr fiber, int64_t exclude = -1);  // 立即调度（多线程模式）
     int getWorkerCount() const;
     
 private:
@@ -54,7 +54,7 @@ private:
     std::vector<std::unique_ptr<FiberConsumer>> consumers_;
 
     // 多线程调度方法
-    FiberConsumer* selectConsumer();
+    FiberConsumer* selectConsumer(int64_t exclude = -1);
     void startConsumers(int count);
     void stopConsumers();
 

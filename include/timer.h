@@ -11,6 +11,7 @@
 #include <memory>
 #include <vector>
 
+// #include "concurrentqueue.h"
 #include "lockfree/lockfree_linked_list.h"
 
 namespace fiber {
@@ -71,14 +72,6 @@ public:
      * @return 定时器指针
      */
     TimerPtr addTimer(uint64_t ms, Callback cb, bool repeat = false);
-
-    /**
-     * @brief 添加定时器（秒，浮点）
-     */
-    TimerPtr addTimer(double seconds, Callback cb, bool repeat = false) {
-        auto ms = static_cast<uint64_t>(seconds * 1000);
-        return addTimer(ms, std::move(cb), repeat);
-    }
 
     /**
      * @brief 刷新定时器（重置超时时间）
@@ -160,6 +153,7 @@ private:
     
     // 待添加队列（多线程安全）
     LockFreeLinkedList<TimerPtr> pending_timers_;    // 待添加的定时器队列
+    // moodycamel::ConcurrentQueue<TimerPtr> pending_timers_;    // 待添加的定时器队列
     
     // 运行状态
     std::atomic<bool> running_;

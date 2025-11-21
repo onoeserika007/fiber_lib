@@ -256,6 +256,11 @@ void AsmContext::switchTo(Context *to) {
         }
 
         ctx->context_.can_enter.store(true);
+
+        // LOG_INFO("Switching to pc:{:#016x}, sp:{:#016x}",
+        //     reinterpret_cast<uint64_t>(ctx->context_.regs[kRETAddr]),
+        //     reinterpret_cast<uint64_t>(ctx->context_.regs[kRSP])
+        //     );
         coctx_swap(&context_, &ctx->context_);
     } else {
         LOG_ERROR("Switch to type cast failed.");

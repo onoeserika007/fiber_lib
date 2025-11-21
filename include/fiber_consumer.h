@@ -4,6 +4,7 @@
 #include <atomic>
 #include <memory>
 #include <thread>
+// #include "concurrentqueue.h"
 #include "fiber.h"
 #include "lockfree/lockfree_linked_list.h"
 
@@ -43,6 +44,7 @@ private:
     
     // 使用lock-free队列存储Fiber::ptr
     std::unique_ptr<LockFreeLinkedList<std::shared_ptr<Fiber>>> queue_;
+    // std::unique_ptr<moodycamel::ConcurrentQueue<Fiber::ptr>> queue_;
     
     void consumerLoop();
     void processTask();

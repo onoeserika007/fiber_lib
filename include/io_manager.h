@@ -42,14 +42,17 @@ public:
     
     bool addEvent(int fd, IOEvent event, Fiber::ptr fiber);
     bool delEvent(int fd, IOEvent event);
-    bool wakeUp(int fd, IOEvent event);
     void delAll(int fd);  // 取消fd上的所有事件
+    bool wakeUp(int fd, IOEvent event);
+    void wakeUpAll(int fd);
     auto getFdContext(int fd) const -> FdContextPtr;
     
     void processEvents(int timeout_ms);
     
 private:
     IOManager();
+
+    bool handleFd(int fd, uint32_t revents);
     
     int epoll_fd_{-1};
     std::vector<std::atomic<FdContextPtr>> fd_contexts_{MAX_FD};

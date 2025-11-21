@@ -164,8 +164,13 @@ void Fiber::go(FiberFunction func, size_t stack_size) {
     fiber->setRunMode(RunMode::SCHEDULED);
     
     // 获取多线程调度器并立即调度
+    auto current = GetCurrentFiberPtr();
     auto&& scheduler = Scheduler::GetScheduler();
-    scheduler.scheduleImmediate(fiber);
+    if (current) {
+        scheduler.scheduleImmediate(fiber, current->GetConsumerId().value_or(-1));
+    } else {
+        scheduler.scheduleImmediate(fiber);
+    }
 }
 
 Fiber::ptr Fiber::create(FiberFunction func, size_t stack_size) {
@@ -198,7 +203,7 @@ void Fiber::sleep(uint64_t ms) {
     timer_wheel.addTimer(ms, [current]() {
         // 定时器到期，重新调度该协程
         auto&& scheduler = Scheduler::GetScheduler();
-        scheduler.scheduleImmediate(current);
+        scheduler.scheduleImmediate(current, current->GetConsumerId().value_or(-1));
     }, false);
 
     Fiber::block_yield();
@@ -216,6 +221,14 @@ void Fiber::SetCurrentFiberPtr(const ptr &fiber) {
 void Fiber::ResetMainFiber() {
     main_fiber_ = {};
     SetCurrentFiberPtr({});
+}
+
+void Fiber::SetConsumerId(uint64_t cos_id) {
+    consumer_id_ = cos_id;
+}
+
+std::optional<uint64_t> Fiber::GetConsumerId() const {
+    return consumer_id_;
 }
 
 } // namespace fiber

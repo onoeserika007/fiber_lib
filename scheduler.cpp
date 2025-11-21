@@ -10,7 +10,7 @@
 
 namespace fiber {
     Scheduler::Scheduler(): state_(SchedulerState::STOPPED) {
-    init(8);
+    init(4);
     // init(std::thread::hardware_concurrency());
     LOG_DEBUG("Scheduler created");
 }
@@ -81,17 +81,28 @@ Scheduler &Scheduler::GetScheduler() {
 }
 
 // 多线程调度方法
-void Scheduler::scheduleImmediate(Fiber::ptr fiber) {
+void Scheduler::scheduleImmediate(Fiber::ptr fiber, int64_t exclude) {
     if (state_ != SchedulerState::RUNNING) {
         LOG_WARN("[Scheduler] pushing fiber when scheduler is not setup, loss fiber!");
         return;
     }
 
-    assert(fiber->getState() != FiberState::DONE && "Scheduling a DONE fiber! This means you got multiple source of a fiber, which is definitely wrong.");
+    assert(fiber->getState() != FiberState::DONE &&
+           "Scheduling a DONE fiber! This means you got multiple source of a fiber, which is definitely wrong.");
+
+    if (fiber->GetConsumerId().has_value()) {
+        FiberConsumer *consumer = consumers_[fiber->GetConsumerId().value()].get();
+        assert(consumer->id() == fiber->GetConsumerId().value() && "scheduleImmediate incompatible consumer id.");
+        while (!consumer->schedule(fiber)) {
+            std::this_thread::yield();
+        }
+        return;
+    }
 
     // LOG_INFO("Scheduling fiber {}", fiber->getId());
     for (;;) {
-        FiberConsumer* consumer = selectConsumer();
+        FiberConsumer *consumer = selectConsumer(exclude);
+
         if (!consumer) {
             LOG_ERROR("No consumer to select, fiber lost");
             return;
@@ -108,16 +119,27 @@ int Scheduler::getWorkerCount() const {
     return static_cast<int>(consumers_.size());
 }
 
-FiberConsumer* Scheduler::selectConsumer() {
+FiberConsumer* Scheduler::selectConsumer(int64_t exclude) {
     if (consumers_.empty()) {
         return nullptr;
     }
     
     // 选择队列最短的consumer
-    FiberConsumer* best = consumers_[0].get();
-    size_t min_queue_size = best->getQueueSize();
+    FiberConsumer* best = nullptr;
+
+    size_t min_queue_size = 0;
     
     for (auto& consumer : consumers_) {
+        if (consumer->id() == exclude) {
+            continue;
+        }
+
+        if (!best) {
+            best = consumer.get();
+            min_queue_size = consumer->getQueueSize();
+            continue;
+        }
+
         size_t queue_size = consumer->getQueueSize();
         if (queue_size < min_queue_size) {
             min_queue_size = queue_size;

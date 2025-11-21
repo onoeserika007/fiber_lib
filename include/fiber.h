@@ -104,6 +104,10 @@ public:
 
     static void ResetMainFiber();
 
+    void SetConsumerId(uint64_t cos_id);
+
+    std::optional<uint64_t> GetConsumerId() const;
+
     ~Fiber();
 
 private:
@@ -124,6 +128,7 @@ private:
 
 
     uint64_t id_;
+    std::optional<uint64_t> consumer_id_;
     FiberState state_;
     FiberFunction func_;
     std::unique_ptr<Context> context_;

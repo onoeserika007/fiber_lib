@@ -54,12 +54,19 @@ bool FiberConsumer::schedule(Fiber::ptr fiber) {
     
     // 这里自旋的话会造成饥饿，因为分配任务的协程有可能是被选中的协程
     // 并发特别大的话就容易这样，因此需要把自旋挪到外面去
+    if (fiber->GetConsumerId().has_value()) {
+        assert(fiber->GetConsumerId().value() == id() && "Fiber scheduled across thread!");
+    }
+
     // return queue_->try_enqueue(fiber);
     queue_->push_back_lockfree(fiber);
     return true;
 }
 
-size_t FiberConsumer::getQueueSize() const { return queue_->size(); }
+size_t FiberConsumer::getQueueSize() const {
+    // return queue_->size_approx();
+    return queue_->size();
+}
 
 int FiberConsumer::id() const { return id_; }
 
@@ -94,14 +101,20 @@ void FiberConsumer::processTask() {
 
     // auto parent_fiber = task->getParentFiber();
     // assert(parent_fiber.get() == nullptr && "A scheduling fiber can't have parent!");
-    
+
+    if (task->GetConsumerId().has_value()) {
+        assert(task->GetConsumerId().value() == id() && "Fiber scheduled across thread!");
+    }
+    task->SetConsumerId(id());
     // 执行fiber任务
     task->resume();
 
     if (task->getState() == FiberState::SUSPENDED) {
         // if not blocked
-        auto& scheduler = Scheduler::GetScheduler();
-        scheduler.scheduleImmediate(task);
+        // while (!queue_->enqueue(task)) {
+        //     std::this_thread::yield();
+        // }
+        queue_->push_back_lockfree(task);
     }
     // 如果状态是DONE，fiber已完成，task的shared_ptr会自动释放
 }

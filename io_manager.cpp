@@ -96,6 +96,9 @@ bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     memset(&ep_event, 0, sizeof(ep_event));
     ep_event.events = new_events | EPOLLET;
     ep_event.data.fd = fd;
+
+    // 有可能一种竞态条件导致事件丢失，在注册epoll事件后，到开始阻塞前，触发了epoll
+    // 所以这里要拿住fd_mutex
     
     int op = old_events ? EPOLL_CTL_MOD : EPOLL_CTL_ADD;
     int ret = epoll_ctl(epoll_fd_, op, fd, &ep_event);
@@ -105,6 +108,14 @@ bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     }
     
     ctx->events = new_events;
+
+    auto current_fiber = Fiber::GetCurrentFiberPtr();
+    // 原来会触发两次的bug是因为在addEvent那里也写了如下逻辑
+    if (event == IOEvent::READ) {
+        ctx->read_waiters->push_back_lockfree(current_fiber);
+    } else if (event == IOEvent::WRITE) {
+        ctx->write_waiters->push_back_lockfree(current_fiber);
+    }
     
     return true;
 }
@@ -149,6 +160,11 @@ bool IOManager::delEvent(int fd, IOEvent event) {
     return true;
 }
 
+void IOManager::delAll(int fd) {
+    // 取消所有可能的事件：READ | WRITE
+    delEvent(fd, static_cast<IOEvent>(EPOLLIN | EPOLLOUT));
+}
+
 // TODO cancel
 // event不应该通知吧？想想通知的场景，应该是超时了才会触发，不超时提前取消说明已经不阻塞了
 bool IOManager::wakeUp(int fd, IOEvent event) {
@@ -159,9 +175,8 @@ bool IOManager::wakeUp(int fd, IOEvent event) {
     return true;
 }
 
-void IOManager::delAll(int fd) {
-    // 取消所有可能的事件：READ | WRITE
-    delEvent(fd, static_cast<IOEvent>(EPOLLIN | EPOLLOUT));
+void IOManager::wakeUpAll(int fd) {
+    wakeUp(fd, static_cast<IOEvent>(EPOLLIN | EPOLLOUT));
 }
 
 void IOManager::triggerEvent(int fd, IOEvent event) {
@@ -196,6 +211,31 @@ std::string IOManager::events_to_string(epoll_event events[], int n) {
 int IOManager::getFdContextNum() const {
 }
 
+bool IOManager::handleFd(int fd, uint32_t revents) {
+    // TODO unordered_map并发不安全，
+    /*任何两个线程，只要有一个线程对容器做写操作，另一个线程同时访问该容器就是未定义行为。*/
+    // 1.改成vector一张大表
+    // 2.改成向工作线程发送信号
+    auto ctx = fd_contexts_[fd].load(std::memory_order_acquire);
+    if (!ctx) {
+        // LOG_WARN("fd:{} cannot find fd context, event may have lost", fd);
+        return false;
+    }
+
+    std::unique_lock fd_lock {ctx->fd_mu};
+
+    if (revents & (EPOLLIN | EPOLLHUP | EPOLLERR)) {
+        // LOG_INFO("Waking up a reader:{}", fd);
+        ctx->read_waiters->notify_all();
+    }
+
+    if (revents & (EPOLLOUT | EPOLLHUP | EPOLLERR)) {
+        ctx->write_waiters->notify_all();
+    }
+
+    return true;
+}
+
 void IOManager::processEvents(int timeout_ms) {
     if (!running_.load(std::memory_order_acquire)) {
         return;
@@ -216,30 +256,26 @@ void IOManager::processEvents(int timeout_ms) {
     // LOG_INFO("Epoll received {} events: {}, total {}", n, events_to_string(events, n), total_events_);
     // LOG_INFO("Fd Contexts size:{}", fd_contexts_.size());
     // LOG_INFO("Add Events call counts:{}", add_events_call_counts_);
-    
+
+    std::queue<std::pair<int, uint32_t>> remains;
     for (int i = 0; i < n; ++i) {
         int fd = events[i].data.fd;
         uint32_t revents = events[i].events;
 
-        // TODO unordered_map并发不安全，
-        /*任何两个线程，只要有一个线程对容器做写操作，另一个线程同时访问该容器就是未定义行为。*/
-        // 1.改成vector一张大表
-        // 2.改成向工作线程发送信号
-        auto ctx = fd_contexts_[fd].load(std::memory_order_acquire);
-        if (!ctx) {
-            LOG_WARN("fd:{} cannot find fd context, event may have lost", fd);
-            continue;
-        }
-        
-        if (revents & (EPOLLIN | EPOLLHUP | EPOLLERR)) {
-            // LOG_INFO("Waking up a reader:{}", fd);
-            ctx->read_waiters->notify_all();
-        }
-        
-        if (revents & (EPOLLOUT | EPOLLHUP | EPOLLERR)) {
-            ctx->write_waiters->notify_all();
-        }
+        handleFd(fd, revents);
+
+        // if (!handleFd(fd, revents)) {
+        //     // remains.push({fd, revents});
+        // }
     }
+
+    // while (!remains.empty()) {
+    //     auto [fd, revents] = remains.front();
+    //     remains.pop();
+    //     if (!handleFd(fd, revents)) {
+    //         remains.push({fd, revents});
+    //     }
+    // }
 }
 
 } // namespace fiber

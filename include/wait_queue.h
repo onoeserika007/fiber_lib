@@ -2,6 +2,8 @@
 #define FIBER_WAIT_QUEUE_H
 
 #include <memory>
+
+// #include "concurrentqueue.h"
 #include "fiber.h"
 #include "lockfree_linked_list.h"
 
@@ -50,9 +52,9 @@ public:
 
 private:
     
-    // 从队列头部取出节点
     Fiber::ptr pop_front_lockfree();
 
+    // moodycamel::ConcurrentQueue<Fiber::ptr> lock_free_queue_;
     LockFreeLinkedList<Fiber::ptr> lock_free_queue_;
 };
 
