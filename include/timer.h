@@ -18,31 +18,26 @@ namespace fiber {
 
 /**
  * @brief 定时器节点
- * 
+ *
  * 单个定时器的数据结构，采用atomic标记实现无锁取消
  */
 struct TimerNode {
     using Callback = std::function<void()>;
     using Duration = std::chrono::milliseconds;
-    
-    Duration timeout;           // 超时时长
-    size_t rotations;          // 剩余轮数
-    Callback callback;         // 回调函数
-    std::atomic<bool> repeat;  // 是否重复
+
+    Duration timeout; // 超时时长
+    size_t rotations; // 剩余轮数
+    Callback callback; // 回调函数
+    std::atomic<bool> repeat; // 是否重复
     std::atomic<bool> canceled; // 是否已取消
-    
-    TimerNode(Duration t, Callback cb, bool rep = false)
-        : timeout(t)
-        , rotations(0)
-        , callback(std::move(cb))
-        , repeat(rep)
-        , canceled(false) {
-    }
+
+    TimerNode(Duration t, Callback cb, bool rep = false) :
+        timeout(t), rotations(0), callback(std::move(cb)), repeat(rep), canceled(false) {}
 };
 
 /**
  * @brief 无锁时间轮定时器
- * 
+ *
  * 采用时间轮算法 + lock-free队列实现完全无锁的定时器
  * 设计要点：
  * 1. 使用vector存储每个slot的定时器链表
@@ -60,7 +55,7 @@ public:
     /**
      * @brief 获取全局时间轮实例
      */
-    static TimerWheel& getInstance();
+    static TimerWheel &getInstance();
 
     ~TimerWheel();
 
@@ -77,7 +72,7 @@ public:
      * @brief 刷新定时器（重置超时时间）
      * @param timer 要刷新的定时器
      * @return 新的定时器（旧的会被取消）
-     * 
+     *
      * 注意：在无锁实现中，refresh会取消旧timer并返回一个新的timer，
      *       新timer使用相同的回调和超时时间
      */
@@ -97,7 +92,7 @@ public:
 
     /**
      * @brief 时间推进（调度器定期调用）
-     * 
+     *
      * 处理当前slot的所有到期定时器
      */
     void tick();
@@ -105,23 +100,17 @@ public:
     /**
      * @brief 获取tick间隔（毫秒）
      */
-    uint64_t getTickInterval() const {
-        return tick_interval_.count();
-    }
+    uint64_t getTickInterval() const { return tick_interval_.count(); }
 
     /**
      * @brief 停止时间轮
      */
-    void stop() {
-        running_.store(false, std::memory_order_release);
-    }
+    void stop() { running_.store(false, std::memory_order_release); }
 
     /**
      * @brief 检查是否在运行
      */
-    bool isRunning() const {
-        return running_.load(std::memory_order_acquire);
-    }
+    bool isRunning() const { return running_.load(std::memory_order_acquire); }
 
     uint32_t getNextTimeOutMs();
 
@@ -129,8 +118,8 @@ private:
     TimerWheel(size_t slots = 256, Duration tick_interval = Duration(10));
 
     // 禁止拷贝
-    TimerWheel(const TimerWheel&) = delete;
-    TimerWheel& operator=(const TimerWheel&) = delete;
+    TimerWheel(const TimerWheel &) = delete;
+    TimerWheel &operator=(const TimerWheel &) = delete;
 
     /**
      * @brief 将定时器添加到指定slot
@@ -144,17 +133,17 @@ private:
 
 private:
     // 时间轮配置
-    const size_t slots_;                    // slot数量
-    const Duration tick_interval_;          // tick间隔
-    
+    const size_t slots_; // slot数量
+    const Duration tick_interval_; // tick间隔
+
     // 时间轮状态（单线程访问，无需原子）
-    std::vector<std::vector<TimerPtr>> wheel_;  // 每个slot存储定时器列表
-    size_t current_slot_;                       // 当前slot索引
-    
+    std::vector<std::vector<TimerPtr>> wheel_; // 每个slot存储定时器列表
+    size_t current_slot_; // 当前slot索引
+
     // 待添加队列（多线程安全）
-    LockFreeLinkedList<TimerPtr> pending_timers_;    // 待添加的定时器队列
+    LockFreeLinkedList<TimerPtr> pending_timers_; // 待添加的定时器队列
     // moodycamel::ConcurrentQueue<TimerPtr> pending_timers_;    // 待添加的定时器队列
-    
+
     // 运行状态
     std::atomic<bool> running_;
 

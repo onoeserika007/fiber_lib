@@ -4,14 +4,14 @@
 #include <stdexcept>
 #include <sys/mman.h>
 
-#include "serika/basic/logger.h"
 #include "fiber.h"
+#include "serika/basic/logger.h"
 
 namespace fiber {
 
 // ============================== UContext Begin ================================== //
 
-UContext::UContext(size_t st_sz) :context_() {
+UContext::UContext(size_t st_sz) : context_() {
     stack_size_ = align_to_page(st_sz);
     stack_ = nullptr;
     total_size_ = stack_size_ + get_page_size();
@@ -30,8 +30,8 @@ UContext::~UContext() {
     }
 }
 
-void UContext::switchTo(Context* to) {
-    if (UContext* uctx = dynamic_cast<UContext*>(to)) {
+void UContext::switchTo(Context *to) {
+    if (UContext *uctx = dynamic_cast<UContext *>(to)) {
         if (swapcontext(&context_, &uctx->context_) == -1) {
             throw std::runtime_error("swapcontext failed");
         }
@@ -40,19 +40,15 @@ void UContext::switchTo(Context* to) {
 
 void UContext::initialize(void (*func)()) {
     if (!stack_ || !mapping_base_) {
-        mapping_base_ = mmap(
-            nullptr,
-            total_size_,
-            PROT_NONE,  // 整个区域初始不可访问
-            MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK,
-            -1, 0
-        );
+        mapping_base_ = mmap(nullptr, total_size_,
+                             PROT_NONE, // 整个区域初始不可访问
+                             MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
         if (mapping_base_ == MAP_FAILED) {
             throw std::runtime_error("mmap failed");
         }
 
         // 设置栈区域为可读写
-        stack_ = static_cast<char*>(mapping_base_) + get_page_size();
+        stack_ = static_cast<char *>(mapping_base_) + get_page_size();
         if (mprotect(stack_, stack_size_, PROT_READ | PROT_WRITE) == -1) {
             munmap(mapping_base_, total_size_);
             throw std::runtime_error("mprotect failed");
@@ -139,28 +135,28 @@ enum {
 
 // 64 bit
 extern "C" {
-    extern void coctx_swap(coctx_t*, coctx_t*) asm("coctx_swap");
+extern void coctx_swap(coctx_t *, coctx_t *) asm("coctx_swap");
 };
 
 #if defined(__i386__)
-int coctx_init(coctx_t* ctx) {
+int coctx_init(coctx_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     return 0;
 }
-int coctx_make(coctx_t* ctx, coctx_pfn_t pfn, const void* s, const void* s1) {
+int coctx_make(coctx_t *ctx, coctx_pfn_t pfn, const void *s, const void *s1) {
     // make room for coctx_param
-    char* sp = ctx->ss_sp + ctx->ss_size - sizeof(coctx_param_t);
-    sp = (char*)((unsigned long)sp & -16L);
+    char *sp = ctx->ss_sp + ctx->ss_size - sizeof(coctx_param_t);
+    sp = (char *) ((unsigned long) sp & -16L);
 
-    coctx_param_t* param = (coctx_param_t*)sp;
-    void** ret_addr = (void**)(sp - sizeof(void*) * 2);
-    *ret_addr = (void*)pfn;
+    coctx_param_t *param = (coctx_param_t *) sp;
+    void **ret_addr = (void **) (sp - sizeof(void *) * 2);
+    *ret_addr = (void *) pfn;
     param->s1 = s;
     param->s2 = s1;
 
     memset(ctx->regs, 0, sizeof(ctx->regs));
 
-    ctx->regs[kESP] = (char*)(sp) - sizeof(void*) * 2;
+    ctx->regs[kESP] = (char *) (sp) - sizeof(void *) * 2;
     return 0;
 }
 #elif defined(__x86_64__)
@@ -181,7 +177,7 @@ int coctx_make(coctx_t *ctx, coctx_pfn_t pfn, const void *s, const void *s1) {
     return 0;
 }
 
-int coctx_init(coctx_t* ctx) {
+int coctx_init(coctx_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     return 0;
 }
@@ -208,7 +204,8 @@ void AsmContext::initialize(void (*func)()) {
         if (!stack_) {
             throw std::runtime_error("Failed to allocate stack");
         }
-        memset(stack_, 0, stack_size_);
+        // 非必要的
+        // memset(stack_, 0, stack_size_);
     }
 
     context_.ss_sp = static_cast<char *>(stack_);
@@ -241,7 +238,7 @@ int AsmContext::fiber_trampoline(void *, void *) {
 }
 
 void AsmContext::switchTo(Context *to) {
-    if (AsmContext* ctx = dynamic_cast<AsmContext*>(to)) {
+    if (AsmContext *ctx = dynamic_cast<AsmContext *>(to)) {
         // save to this, and switch to ctx
         // LOG_INFO("Jumping to {}", ctx->context_.regs[kRETAddr]);
         assert(ctx->context_.regs[kRETAddr] != 0 && "Invalid ret addr");
@@ -251,7 +248,8 @@ void AsmContext::switchTo(Context *to) {
         //     LOG_INFO("Switch to a old fiber, addr:{}", reinterpret_cast<uint64_t>(ctx->context_.regs[kRETAddr]));
         // }
         bool expected = true;
-        if (!context_.can_enter.compare_exchange_strong(expected, false, std::memory_order_release, std::memory_order_relaxed)) {
+        if (!context_.can_enter.compare_exchange_strong(expected, false, std::memory_order_release,
+                                                        std::memory_order_relaxed)) {
             throw std::runtime_error("A fiber context loaded before it can be accessed!");
         }
 

@@ -2,10 +2,10 @@
 #include <cassert>
 #include <ucontext.h>
 
-#include "fiber.h"
-#include "serika/basic/logger.h"
 #include "context.h"
+#include "fiber.h"
 #include "scheduler.h"
+#include "serika/basic/logger.h"
 #include "timer.h"
 
 namespace fiber {
@@ -16,19 +16,11 @@ thread_local std::weak_ptr<Fiber> Fiber::current_fiber_weak_;
 
 std::atomic<uint64_t> fiber_id_counter{0};
 
-uint64_t Fiber::generateId() {
-    return ++fiber_id_counter;
-}
+uint64_t Fiber::generateId() { return ++fiber_id_counter; }
 
 
-
-Fiber::Fiber(FiberFunction func) 
-    : id_(generateId()), 
-      state_(FiberState::READY),
-      func_(std::move(func)),
-      run_mode_(RunMode::MANUAL) {
-
-}
+Fiber::Fiber(FiberFunction func) :
+    id_(generateId()), state_(FiberState::READY), func_(std::move(func)), run_mode_(RunMode::MANUAL) {}
 
 void Fiber::Init(size_t stack_size) {
     // main fiber
@@ -60,7 +52,7 @@ void Fiber::resume() {
         return;
     }
     assert(context_ && "Fiber context is null");
-    
+
     auto current_fiber = Fiber::GetCurrentFiberPtr();
     if (!current_fiber) {
         current_fiber = GetMainFiber();
@@ -78,9 +70,9 @@ void Fiber::resume() {
 }
 
 void Fiber::yield() {
-    Fiber* current = current_fiber_;
+    Fiber *current = current_fiber_;
     assert(current && "No current fiber");
-    
+
     // 只有在不是DONE状态时才设置为SUSPENDED
     if (current->state_ != FiberState::DONE) {
         current->state_ = FiberState::SUSPENDED;
@@ -90,7 +82,7 @@ void Fiber::yield() {
 }
 
 void Fiber::block_yield() {
-    Fiber* current = current_fiber_;
+    Fiber *current = current_fiber_;
     assert(current && "No current fiber");
     // LOG_INFO("Blocking fiber:{}", current->getId());
 
@@ -119,13 +111,9 @@ void Fiber::yield_internal(Fiber *current) {
     current->context_->switchTo(parent_fiber->context_.get());
 }
 
-FiberState Fiber::getState() const {
-    return state_;
-}
+FiberState Fiber::getState() const { return state_; }
 
-void Fiber::setState(FiberState state) {
-    state_ = state;
-}
+void Fiber::setState(FiberState state) { state_ = state; }
 
 uint64_t Fiber::getId() const { return id_; }
 
@@ -142,7 +130,7 @@ void Fiber::fiberEntry() {
     if (current->func_) {
         current->func_();
     }
-    
+
     current->state_ = FiberState::DONE;
 
     yield_internal(current);
@@ -162,10 +150,10 @@ Fiber::ptr Fiber::GetMainFiber() {
 void Fiber::go(FiberFunction func, size_t stack_size) {
     auto fiber = Fiber::create(std::move(func), stack_size);
     fiber->setRunMode(RunMode::SCHEDULED);
-    
+
     // 获取多线程调度器并立即调度
     auto current = GetCurrentFiberPtr();
-    auto&& scheduler = Scheduler::GetScheduler();
+    auto &&scheduler = Scheduler::GetScheduler();
     if (current) {
         scheduler.scheduleImmediate(fiber, current->GetConsumerId().value_or(-1));
     } else {
@@ -182,7 +170,7 @@ Fiber::ptr Fiber::create(FiberFunction func, size_t stack_size) {
 }
 
 int Fiber::getWorkerCount() {
-    auto&& scheduler = Scheduler::GetScheduler();
+    auto &&scheduler = Scheduler::GetScheduler();
     return scheduler.getWorkerCount();
 }
 
@@ -199,18 +187,21 @@ void Fiber::sleep(uint64_t ms) {
         return;
     }
 
-    auto& timer_wheel = TimerWheel::getInstance();
-    timer_wheel.addTimer(ms, [current]() {
-        // 定时器到期，重新调度该协程
-        auto&& scheduler = Scheduler::GetScheduler();
-        scheduler.scheduleImmediate(current, current->GetConsumerId().value_or(-1));
-    }, false);
+    auto &timer_wheel = TimerWheel::getInstance();
+    timer_wheel.addTimer(
+            ms,
+            [current]() {
+                // 定时器到期，重新调度该协程
+                auto &&scheduler = Scheduler::GetScheduler();
+                scheduler.scheduleImmediate(current, current->GetConsumerId().value_or(-1));
+            },
+            false);
 
     Fiber::block_yield();
 }
 
 Fiber::ptr Fiber::GetCurrentFiberPtr() {
-    return current_fiber_weak_.lock();  // 安全地转换为shared_ptr
+    return current_fiber_weak_.lock(); // 安全地转换为shared_ptr
 }
 
 void Fiber::SetCurrentFiberPtr(const ptr &fiber) {
@@ -223,12 +214,8 @@ void Fiber::ResetMainFiber() {
     SetCurrentFiberPtr({});
 }
 
-void Fiber::SetConsumerId(uint64_t cos_id) {
-    consumer_id_ = cos_id;
-}
+void Fiber::SetConsumerId(uint64_t cos_id) { consumer_id_ = cos_id; }
 
-std::optional<uint64_t> Fiber::GetConsumerId() const {
-    return consumer_id_;
-}
+std::optional<uint64_t> Fiber::GetConsumerId() const { return consumer_id_; }
 
 } // namespace fiber

@@ -6,8 +6,8 @@
 #include <memory>
 #include <thread>
 
-#include "serika/basic/logger.h"
 #include "context.h"
+#include "serika/basic/logger.h"
 
 namespace fiber {
 
@@ -15,13 +15,7 @@ class Context;
 class Scheduler;
 class AsmContext;
 
-enum class FiberState {
-    READY,
-    RUNNING,
-    SUSPENDED,
-    BLOCKED,
-    DONE
-};
+enum class FiberState { READY, RUNNING, SUSPENDED, BLOCKED, DONE };
 
 // must be public inheritance
 class Fiber : public std::enable_shared_from_this<Fiber> {
@@ -30,27 +24,27 @@ public:
     friend class AsmContext;
     using ptr = std::shared_ptr<Fiber>;
     using FiberFunction = std::function<void()>;
-    
+
     enum class RunMode {
-        MANUAL,      // Lua语义：手动控制
-        SCHEDULED    // Go语义：调度器管理  
+        MANUAL, // Lua语义：手动控制
+        SCHEDULED // Go语义：调度器管理
     };
-    
+
     void resume();
     static void yield();
     static void block_yield();
-    
+
     FiberState getState() const;
     void setState(FiberState state);
 
     uint64_t getId() const;
 
     Fiber::ptr getParentFiber();
-    
+
     // =========================
     // Lua语义接口 (手动控制)
     // =========================
-    
+
     /**
      * 创建fiber但不启动 (Lua语义)
      * @param func 要执行的函数
@@ -58,20 +52,18 @@ public:
      */
     static Fiber::ptr create(FiberFunction func, size_t stack_size = UContext::DEFAULT_STACK_SIZE);
 
-    
+
     /**
      * 检查fiber是否已完成
      * @param fiber 要检查的fiber
      * @return true表示已完成
      */
-    bool isDone() const {
-        return getState() == FiberState::DONE;
-    }
-    
-    // =========================  
+    bool isDone() const { return getState() == FiberState::DONE; }
+
+    // =========================
     // Go语义接口 (自动调度)
     // =========================
-    
+
     /**
      * 创建并立即执行goroutine (Go语义)
      * 立即在多线程中开始执行
@@ -83,24 +75,24 @@ public:
      * 获取工作线程数量
      */
     static int getWorkerCount();
-    
+
     /**
      * @brief 协程休眠（毫秒）
      * @param ms 休眠时间（毫秒）
      */
     static void sleep(uint64_t ms);
-    
+
     /**
      * @brief 获取当前协程的shared_ptr（用于WaitQueue等同步机制）
      * @return 当前协程的shared_ptr，如果不在协程中则返回nullptr
      */
     static ptr GetCurrentFiberPtr();
-    
+
     /**
      * @brief 设置当前协程的weak_ptr（供调度器调用）
      * @param fiber 当前协程的shared_ptr
      */
-    static void SetCurrentFiberPtr(const ptr& fiber);
+    static void SetCurrentFiberPtr(const ptr &fiber);
 
     static void ResetMainFiber();
 
@@ -113,10 +105,10 @@ public:
 private:
     explicit Fiber(FiberFunction func);
 
-    Fiber(const Fiber&) = delete;
-    Fiber& operator=(const Fiber&) = delete;
-    Fiber(Fiber&&) = delete;
-    Fiber& operator=(Fiber&&) = delete;
+    Fiber(const Fiber &) = delete;
+    Fiber &operator=(const Fiber &) = delete;
+    Fiber(Fiber &&) = delete;
+    Fiber &operator=(Fiber &&) = delete;
 
     void Init(size_t stack_size = UContext::DEFAULT_STACK_SIZE);
     static void fiberEntry();
@@ -134,7 +126,7 @@ private:
     std::unique_ptr<Context> context_;
     RunMode run_mode_;
     Fiber::ptr parent_fiber_;
-    
+
     static uint64_t generateId();
     static Fiber::ptr GetMainFiber();
     static thread_local Fiber::ptr main_fiber_;

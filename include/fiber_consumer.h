@@ -19,33 +19,33 @@ class Scheduler;
  */
 class FiberConsumer {
 public:
-    FiberConsumer(int id, Scheduler* scheduler);
+    FiberConsumer(int id, Scheduler *scheduler);
     ~FiberConsumer();
-    
-    FiberConsumer(const FiberConsumer&) = delete;
-    FiberConsumer& operator=(const FiberConsumer&) = delete;
-    FiberConsumer(FiberConsumer&&) = delete;
-    FiberConsumer& operator=(FiberConsumer&&) = delete;
+
+    FiberConsumer(const FiberConsumer &) = delete;
+    FiberConsumer &operator=(const FiberConsumer &) = delete;
+    FiberConsumer(FiberConsumer &&) = delete;
+    FiberConsumer &operator=(FiberConsumer &&) = delete;
 
     int id() const;
     void start();
     void stop();
     bool schedule(Fiber::ptr fiber);
     size_t getQueueSize() const;
-    
+    auto popTask() -> std::optional<Fiber::ptr>;
+
 private:
-    static constexpr size_t QUEUE_SIZE = 1024;  // 队列容量
-    
+    static constexpr size_t QUEUE_SIZE = 1024; // 队列容量
     int id_;
-private:
-    Scheduler * scheduler_;
+
+    Scheduler *scheduler_;
     std::thread thread_;
     std::atomic<bool> running_{false};
-    
+
     // 使用lock-free队列存储Fiber::ptr
     std::unique_ptr<LockFreeLinkedList<std::shared_ptr<Fiber>>> queue_;
     // std::unique_ptr<moodycamel::ConcurrentQueue<Fiber::ptr>> queue_;
-    
+
     void consumerLoop();
     void processTask();
 };

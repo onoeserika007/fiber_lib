@@ -1,22 +1,18 @@
 #ifndef FIBER_SCHEDULER_H
 #define FIBER_SCHEDULER_H
 
-#include "fiber.h"
-#include <queue>
-#include <memory>
-#include <vector>
-#include <thread>
-#include <mutex>
-#include <condition_variable>
 #include <atomic>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <thread>
+#include <vector>
+#include "fiber.h"
 
 namespace fiber {
 
-enum class SchedulerState {
-    STOPPED,
-    RUNNING,
-    STOPPING
-};
+enum class SchedulerState { STOPPED, RUNNING, STOPPING };
 
 class FiberConsumer;
 
@@ -27,10 +23,10 @@ public:
     friend class Fiber;
     friend class WaitQueue;
 
-    static Scheduler &GetScheduler();  // 获取多线程调度器
+    static Scheduler &GetScheduler(); // 获取多线程调度器
     ~Scheduler();
-    
-    void init(int worker_count = 1);  // 支持指定工作线程数
+
+    void init(int worker_count = 1); // 支持指定工作线程数
     void run();
     void stop();
     bool isRunning() const;
@@ -39,31 +35,34 @@ public:
     bool hasReadyFibers() const;
 
     // 多线程调度专用接口
-    void scheduleImmediate(Fiber::ptr fiber, int64_t exclude = -1);  // 立即调度（多线程模式）
+    void scheduleImmediate(Fiber::ptr fiber, int64_t exclude = -1); // 立即调度（多线程模式）
+
+    void stealWork(uint64_t stealer_id);
     int getWorkerCount() const;
-    
+
 private:
     SchedulerState state_;
-    
+
     // 单线程模式成员（仅为Lua语义提供main_fiber_）
     std::queue<Fiber::ptr> ready_queue_;
     std::vector<Fiber::ptr> all_fibers_;
     Fiber::ptr main_fiber_;
-    
+    size_t rr_index_ {0};
+
     // lock-free consumers
     std::vector<std::unique_ptr<FiberConsumer>> consumers_;
 
     // 多线程调度方法
-    FiberConsumer* selectConsumer(int64_t exclude = -1);
+    FiberConsumer *selectConsumer(int64_t exclude = -1);
     void startConsumers(int count);
     void stopConsumers();
 
     Scheduler();
 
-    Scheduler(const Scheduler&) = delete;
-    Scheduler& operator=(const Scheduler&) = delete;
-    Scheduler(Scheduler&&) = delete;
-    Scheduler& operator=(Scheduler&&) = delete;
+    Scheduler(const Scheduler &) = delete;
+    Scheduler &operator=(const Scheduler &) = delete;
+    Scheduler(Scheduler &&) = delete;
+    Scheduler &operator=(Scheduler &&) = delete;
 };
 
 } // namespace fiber
@@ -84,19 +83,22 @@ private:
  *
  * 效果：整个main函数内容在多线程调度器的协程中运行
  */
-#define FIBER_MAIN()                                          \
-int __fiber_main_impl(int argc, char** argv);                                      \
-int main(int argc, char** argv) {                             \
-    (void)argc; (void)argv;                                   \
-    std::atomic<int> exit_code{0};                           \
-    fiber::Fiber::go([&exit_code, argc, argv]() {                        \
-        int ret = __fiber_main_impl(argc, argv);                        \
-        exit_code.store(ret);                                 \
-        fiber::Scheduler::GetScheduler().stop();            \
-    }, 64 * 1024 * 1024);                                                       \
-    fiber::Scheduler::GetScheduler().run();                 \
-    return exit_code.load();                                  \
-}                                                             \
-int __fiber_main_impl(int argc, char** argv)
+#define FIBER_MAIN()                                                                                                   \
+    int __fiber_main_impl(int argc, char **argv);                                                                      \
+    int main(int argc, char **argv) {                                                                                  \
+        (void) argc;                                                                                                   \
+        (void) argv;                                                                                                   \
+        std::atomic<int> exit_code{0};                                                                                 \
+        fiber::Fiber::go(                                                                                              \
+                [&exit_code, argc, argv]() {                                                                           \
+                    int ret = __fiber_main_impl(argc, argv);                                                           \
+                    exit_code.store(ret);                                                                              \
+                    fiber::Scheduler::GetScheduler().stop();                                                           \
+                },                                                                                                     \
+                64 * 1024 * 1024);                                                                                     \
+        fiber::Scheduler::GetScheduler().run();                                                                        \
+        return exit_code.load();                                                                                       \
+    }                                                                                                                  \
+    int __fiber_main_impl(int argc, char **argv)
 
 #endif // FIBER_SCHEDULER_H

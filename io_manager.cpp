@@ -6,28 +6,26 @@
 
 namespace fiber {
 
-IOManager& IOManager::getInstance() {
+IOManager &IOManager::getInstance() {
     static IOManager instance;
     return instance;
 }
 
 IOManager::IOManager() = default;
 
-IOManager::~IOManager() {
-    shutdown();
-}
+IOManager::~IOManager() { shutdown(); }
 
 void IOManager::init() {
     if (running_.load(std::memory_order_acquire)) {
         return;
     }
-    
+
     epoll_fd_ = epoll_create1(EPOLL_CLOEXEC);
     if (epoll_fd_ < 0) {
         LOG_ERROR("epoll_create1 failed: {}", strerror(errno));
         throw std::runtime_error("Failed to create epoll instance");
     }
-    
+
     running_.store(true, std::memory_order_release);
     LOG_DEBUG("IOManager initialized (epoll_fd={})", epoll_fd_);
 }
@@ -36,12 +34,12 @@ void IOManager::shutdown() {
     if (!running_.exchange(false, std::memory_order_acq_rel)) {
         return;
     }
-    
+
     if (epoll_fd_ >= 0) {
         close(epoll_fd_);
         epoll_fd_ = -1;
     }
-    
+
     fd_contexts_.clear();
     LOG_DEBUG("IOManager shutdown");
 }
@@ -60,12 +58,9 @@ IOManager::FdContextPtr IOManager::getOrCreateFdContext(int fd) {
     new_ctx->write_waiters = std::make_unique<WaitQueue>();
 
     // 2nd check + CAS
-    std::shared_ptr<FdContext> expected = nullptr;  // must be null
-    if (fd_contexts_[fd].compare_exchange_strong(
-            expected,
-            new_ctx,
-            std::memory_order_acq_rel,
-            std::memory_order_acquire)) {
+    std::shared_ptr<FdContext> expected = nullptr; // must be null
+    if (fd_contexts_[fd].compare_exchange_strong(expected, new_ctx, std::memory_order_acq_rel,
+                                                 std::memory_order_acquire)) {
         // CAS 成功，new_ctx 被放入表中
         return new_ctx;
     }
@@ -74,9 +69,7 @@ IOManager::FdContextPtr IOManager::getOrCreateFdContext(int fd) {
     return expected;
 }
 
-auto IOManager::getFdContext(int fd) const -> FdContextPtr {
-    return fd_contexts_[fd].load(std::memory_order_relaxed);
-}
+auto IOManager::getFdContext(int fd) const -> FdContextPtr { return fd_contexts_[fd].load(std::memory_order_relaxed); }
 
 bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     if (!running_.load(std::memory_order_acquire)) {
@@ -86,12 +79,12 @@ bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     // LOG_DEBUG("[IOManager] Add Events, fd:{}, getting latch", fd);
     auto ctx = getOrCreateFdContext(fd);
 
-    std::unique_lock fd_lock {ctx->fd_mu};
+    std::unique_lock fd_lock{ctx->fd_mu};
 
     uint32_t old_events = ctx->events;
     uint32_t new_events = old_events | static_cast<uint32_t>(event);
     // LOG_INFO("[IOManager] Add Events, fd:{}, old_events={}, new_events={}", fd, old_events, new_events);
-    
+
     epoll_event ep_event;
     memset(&ep_event, 0, sizeof(ep_event));
     ep_event.events = new_events | EPOLLET;
@@ -99,14 +92,14 @@ bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
 
     // 有可能一种竞态条件导致事件丢失，在注册epoll事件后，到开始阻塞前，触发了epoll
     // 所以这里要拿住fd_mutex
-    
+
     int op = old_events ? EPOLL_CTL_MOD : EPOLL_CTL_ADD;
     int ret = epoll_ctl(epoll_fd_, op, fd, &ep_event);
     if (ret < 0) {
         LOG_ERROR("[addEvent] epoll_ctl failed: fd={}, op={}, error={}", fd, op, strerror(errno));
         return false;
     }
-    
+
     ctx->events = new_events;
 
     auto current_fiber = Fiber::GetCurrentFiberPtr();
@@ -116,7 +109,7 @@ bool IOManager::addEvent(int fd, IOEvent event, Fiber::ptr fiber) {
     } else if (event == IOEvent::WRITE) {
         ctx->write_waiters->push_back_lockfree(current_fiber);
     }
-    
+
     return true;
 }
 
@@ -127,36 +120,36 @@ bool IOManager::delEvent(int fd, IOEvent event) {
 
     // LOG_INFO("[IOManager] Del Events, fd:{}, getting latch", fd);
 
-    
+
     auto ctx = fd_contexts_[fd].load(std::memory_order_acquire);
 
     if (!ctx) {
         return false;
     }
 
-    std::unique_lock fd_lock {ctx->fd_mu};
+    std::unique_lock fd_lock{ctx->fd_mu};
     uint32_t old_events = ctx->events;
     uint32_t new_events = old_events & ~static_cast<uint32_t>(event);
     // LOG_DEBUG("[IOManager] Del Event, fd={}, old_events={}, new_events={}", fd, old_events, new_events);
-    
+
     epoll_event ep_event;
     memset(&ep_event, 0, sizeof(ep_event));
     ep_event.events = new_events | EPOLLET;
     ep_event.data.fd = fd;
-    
+
     int op = new_events ? EPOLL_CTL_MOD : EPOLL_CTL_DEL;
     int ret = epoll_ctl(epoll_fd_, op, fd, &ep_event);
     if (ret < 0) {
         LOG_ERROR("[delEvent] epoll_ctl failed: fd={}, op={}, error={}", fd, op, strerror(errno));
         return false;
     }
-    
+
     ctx->events = new_events;
-    
+
     if (new_events == 0) {
         fd_contexts_[fd].store(nullptr, std::memory_order_release);
     }
-    
+
     return true;
 }
 
@@ -175,9 +168,7 @@ bool IOManager::wakeUp(int fd, IOEvent event) {
     return true;
 }
 
-void IOManager::wakeUpAll(int fd) {
-    wakeUp(fd, static_cast<IOEvent>(EPOLLIN | EPOLLOUT));
-}
+void IOManager::wakeUpAll(int fd) { wakeUp(fd, static_cast<IOEvent>(EPOLLIN | EPOLLOUT)); }
 
 void IOManager::triggerEvent(int fd, IOEvent event) {
 
@@ -185,7 +176,7 @@ void IOManager::triggerEvent(int fd, IOEvent event) {
     if (!ctx) {
         return;
     }
-    
+
     uint32_t events = static_cast<uint32_t>(event);
     if (events & EPOLLIN) {
         ctx->read_waiters->notify_all();
@@ -208,8 +199,7 @@ std::string IOManager::events_to_string(epoll_event events[], int n) {
     return os.str();
 }
 
-int IOManager::getFdContextNum() const {
-}
+int IOManager::getFdContextNum() const {}
 
 bool IOManager::handleFd(int fd, uint32_t revents) {
     // TODO unordered_map并发不安全，
@@ -222,7 +212,7 @@ bool IOManager::handleFd(int fd, uint32_t revents) {
         return false;
     }
 
-    std::unique_lock fd_lock {ctx->fd_mu};
+    std::unique_lock fd_lock{ctx->fd_mu};
 
     if (revents & (EPOLLIN | EPOLLHUP | EPOLLERR)) {
         // LOG_INFO("Waking up a reader:{}", fd);
@@ -240,10 +230,10 @@ void IOManager::processEvents(int timeout_ms) {
     if (!running_.load(std::memory_order_acquire)) {
         return;
     }
-    
+
     constexpr int MAX_EVENTS = 1024;
     epoll_event events[MAX_EVENTS];
-    
+
     int n = epoll_wait(epoll_fd_, events, MAX_EVENTS, timeout_ms);
     if (n < 0) {
         if (errno != EINTR) {

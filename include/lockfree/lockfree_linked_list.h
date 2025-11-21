@@ -32,18 +32,21 @@ class LockFreeLinkedList {
 
 
     struct ListNode {
-        T data;
-        std::atomic<TaggedPtr<ListNode>> next{};
+        alignas(64) T data; // 消费者访问
+        char pad1[64 - sizeof(T)]{}; // 填充
+
+        alignas(64) std::atomic<TaggedPtr<ListNode>> next{}; // 生产者访问
+        char pad2[64 - sizeof(std::atomic<TaggedPtr<ListNode>>)]{}; // 填充
+
         ListNode() : data() {}
 
-        template<typename Y, std::enable_if_t<!std::is_same_v<std::decay_t<Y>, ListNode*>, int> = 0>
+        template<typename Y, std::enable_if_t<!std::is_same_v<std::decay_t<Y>, ListNode *>, int> = 0>
         explicit ListNode(Y &&_data) : data(std::forward<Y>(_data)) {}
 
         template<typename Y>
-        ListNode(Y &&_data, ListNode* _next) : data(std::forward<Y>(_data)), next(TaggedPtr<ListNode>(_next)) {}
+        ListNode(Y &&_data, ListNode *_next) : data(std::forward<Y>(_data)), next(TaggedPtr<ListNode>(_next)) {}
 
-        explicit ListNode(ListNode* _next) : next(TaggedPtr<ListNode>(_next)) {}
-
+        explicit ListNode(ListNode *_next) : next(TaggedPtr<ListNode>(_next)) {}
     };
 
     using Node = ListNode;
@@ -80,9 +83,7 @@ public:
         return h == t;
     }
 
-    size_t size() const {
-        return size_.load(std::memory_order_relaxed);
-    }
+    size_t size() const { return size_.load(std::memory_order_relaxed); }
 
     // std::atomic_compare_exchange_weak
     // "If the comparison fails, the value of expected is updated to the value held by the atomic object at the time
@@ -109,19 +110,19 @@ public:
                 // they do the same thing
                 // if compare_exchange_weak failed, tail will be updated to the real value of tail_
                 TaggedNodePtr new_tail{next_ptr, tail.get_next_tag()};
-                tail_.compare_exchange_weak(tail, new_tail, std::memory_order_release, std::memory_order_relaxed);
+                tail_.compare_exchange_weak(tail, new_tail, std::memory_order_acq_rel, std::memory_order_relaxed);
                 continue;
             }
 
             TaggedNodePtr new_tail_next{new_node, next.get_next_tag()};
             // if insert new node success, break
-            if (tail_ptr->next.compare_exchange_weak(next, new_tail_next, std::memory_order_release,
+            if (tail_ptr->next.compare_exchange_weak(next, new_tail_next, std::memory_order_acq_rel,
                                                      std::memory_order_relaxed)) {
                 size_.fetch_add(1, std::memory_order_relaxed);
                 // they do the same thing
                 // step global tail
                 TaggedNodePtr new_tail{new_node, tail.get_next_tag()};
-                tail_.compare_exchange_weak(tail, new_tail, std::memory_order_release, std::memory_order_relaxed);
+                tail_.compare_exchange_weak(tail, new_tail, std::memory_order_acq_rel, std::memory_order_relaxed);
                 break;
             }
         }
@@ -152,13 +153,13 @@ public:
             // if tail_ lagged off to real tail
             if (head_ptr == tail_ptr && next_ptr != nullptr) {
                 TaggedNodePtr new_tail{next_ptr, tail.get_next_tag()};
-                tail_.compare_exchange_weak(tail, new_tail, std::memory_order_release, std::memory_order_relaxed);
+                tail_.compare_exchange_weak(tail, new_tail, std::memory_order_acq_rel, std::memory_order_relaxed);
                 continue;
             }
 
             TaggedNodePtr new_head{next_ptr, head.get_next_tag()};
             // Normally dequeue, trying to move head
-            if (head_.compare_exchange_weak(head, new_head, std::memory_order_release, std::memory_order_relaxed)) {
+            if (head_.compare_exchange_weak(head, new_head, std::memory_order_acq_rel, std::memory_order_relaxed)) {
                 size_.fetch_sub(1, std::memory_order_relaxed);
                 result = std::move(next_ptr->data);
                 pool_.template destruct<true>(head);
@@ -177,7 +178,7 @@ private:
     PoolType pool_;
 
     // size
-    std::atomic<size_t> size_ {};
+    std::atomic<size_t> size_{};
 };
 
 } // namespace fiber

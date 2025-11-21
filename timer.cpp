@@ -10,7 +10,7 @@ namespace fiber {
 
 // ==================== TimerWheel 实现 ====================
 
-TimerWheel& TimerWheel::getInstance() {
+TimerWheel &TimerWheel::getInstance() {
     static TimerWheel instance;
     return instance;
 }
@@ -25,40 +25,31 @@ uint32_t TimerWheel::getNextTimeOutMs() {
     return static_cast<int>(remaining.count());
 }
 
-void TimerWheel::addTimerToSlot(size_t slot, TimerPtr timer) {
-}
+void TimerWheel::addTimerToSlot(size_t slot, TimerPtr timer) {}
 
-TimerWheel::TimerWheel(size_t slots, Duration tick_interval)
-    : slots_(slots)
-    , tick_interval_(tick_interval)
-    , wheel_(slots)
-    , current_slot_(0)
+TimerWheel::TimerWheel(size_t slots, Duration tick_interval) :
+    slots_(slots), tick_interval_(tick_interval), wheel_(slots), current_slot_(0)
     // , pending_timers_(1024)  // 待添加队列容量
-    , running_(true) {
-    for (auto& slot : wheel_) {
+    ,
+    running_(true) {
+    for (auto &slot: wheel_) {
         slot.reserve(16);
     }
 }
 
-TimerWheel::~TimerWheel() {
-    stop();
-}
+TimerWheel::~TimerWheel() { stop(); }
 
 TimerWheel::TimerPtr TimerWheel::addTimer(uint64_t ms, Callback cb, bool repeat) {
     if (!running_.load(std::memory_order_acquire)) {
         return nullptr;
     }
 
-    auto timer = std::make_shared<TimerNode>(
-        Duration(ms),
-        std::move(cb),
-        repeat
-    );
+    auto timer = std::make_shared<TimerNode>(Duration(ms), std::move(cb), repeat);
 
     // 计算slot和rotations
     uint64_t ticks = ms / tick_interval_.count();
     if (ticks == 0) {
-        ticks = 1;  // 至少延迟一个tick
+        ticks = 1; // 至少延迟一个tick
     }
 
     size_t target_slot = (current_slot_ + ticks) % slots_;
@@ -85,14 +76,10 @@ TimerWheel::TimerPtr TimerWheel::refresh(TimerPtr timer) {
 
     // 取消旧timer
     timer->canceled.store(true, std::memory_order_release);
-    
+
     // 创建新timer，使用相同的回调和超时参数
     uint64_t ms = static_cast<uint64_t>(timer->timeout.count());
-    return addTimer(
-        ms,
-        timer->callback,
-        timer->repeat.load(std::memory_order_acquire)
-    );
+    return addTimer(ms, timer->callback, timer->repeat.load(std::memory_order_acquire));
 }
 
 void TimerWheel::triggerNow(TimerPtr timer) {
@@ -107,7 +94,7 @@ void TimerWheel::triggerNow(TimerPtr timer) {
     if (timer->callback) {
         try {
             timer->callback();
-        } catch (const std::exception& e) {
+        } catch (const std::exception &e) {
             LOG_ERROR("Timer callback exception: {}", e.what());
         } catch (...) {
             LOG_ERROR("Timer callback unknown exception");
@@ -138,10 +125,10 @@ void TimerWheel::tick() {
     processPendingTimers();
 
     // 2. 处理当前slot的定时器
-    auto& bucket = wheel_[current_slot_];
-    
-    for (auto it = bucket.begin(); it != bucket.end(); ) {
-        auto& timer = *it;
+    auto &bucket = wheel_[current_slot_];
+
+    for (auto it = bucket.begin(); it != bucket.end();) {
+        auto &timer = *it;
 
         // 如果已取消，移除
         if (timer->canceled.load(std::memory_order_acquire)) {
@@ -160,7 +147,7 @@ void TimerWheel::tick() {
         if (timer->callback) {
             try {
                 timer->callback();
-            } catch (const std::exception& e) {
+            } catch (const std::exception &e) {
                 LOG_ERROR("Timer callback exception: {}", e.what());
             } catch (...) {
                 LOG_ERROR("Timer callback unknown exception");
@@ -168,17 +155,18 @@ void TimerWheel::tick() {
         }
 
         // 如果是循环定时器且未被取消，重新添加
-        bool should_repeat = timer->repeat.load(std::memory_order_acquire) &&
-                           !timer->canceled.load(std::memory_order_acquire);
-        
+        bool should_repeat =
+                timer->repeat.load(std::memory_order_acquire) && !timer->canceled.load(std::memory_order_acquire);
+
         if (should_repeat) {
             // 重新计算slot和rotations
             uint64_t ticks = timer->timeout.count() / tick_interval_.count();
-            if (ticks == 0) ticks = 1;
-            
+            if (ticks == 0)
+                ticks = 1;
+
             size_t target_slot = (current_slot_ + ticks) % slots_;
             timer->rotations = ticks / slots_;
-            
+
             // 如果目标slot不是当前slot，移动到目标slot
             if (target_slot != current_slot_) {
                 wheel_[target_slot].push_back(timer);
@@ -204,7 +192,7 @@ void TimerWheel::tick() {
 void TimerWheel::processPendingTimers() {
     TimerPtr timer;
     int processed = 0;
-    const int max_batch = 100;  // 每次tick最多处理100个待添加定时器
+    const int max_batch = 100; // 每次tick最多处理100个待添加定时器
 
     // while (processed < max_batch && pending_timers_.try_dequeue(timer)) {
     while (processed < max_batch && !pending_timers_.empty()) {
@@ -216,8 +204,9 @@ void TimerWheel::processPendingTimers() {
 
         // 计算目标slot
         uint64_t ticks = timer->timeout.count() / tick_interval_.count();
-        if (ticks == 0) ticks = 1;
-        
+        if (ticks == 0)
+            ticks = 1;
+
         size_t target_slot = (current_slot_ + ticks) % slots_;
         timer->rotations = ticks / slots_;
 

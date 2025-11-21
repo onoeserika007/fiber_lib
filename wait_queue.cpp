@@ -1,8 +1,8 @@
 #include "wait_queue.h"
-#include "scheduler.h"
 #include <cassert>
-#include <stdexcept>
 #include <iostream>
+#include <stdexcept>
+#include "scheduler.h"
 
 namespace fiber {
 
@@ -19,12 +19,12 @@ void WaitQueue::wait() {
 
     // 无锁添加到等待队列
     push_back_lockfree(current_fiber);
-    
+
     // std::cout << "DEBUG: Fiber " << current_fiber->getId() << " entering wait queue (lockfree)" << std::endl;
-    
+
     // 让出执行权，等待被唤醒
     Fiber::block_yield();
-    
+
     // std::cout << "DEBUG: Fiber " << current_fiber->getId() << " resumed from wait queue (lockfree)" << std::endl;
 }
 
@@ -33,11 +33,11 @@ bool WaitQueue::notify_one() {
     auto fiber = pop_front_lockfree();
 
     if (!fiber) {
-        return false;  // 队列为空
+        return false; // 队列为空
     }
 
     // 获取调度器并重新调度协程
-    auto&& scheduler = Scheduler::GetScheduler();
+    auto &&scheduler = Scheduler::GetScheduler();
     scheduler.scheduleImmediate(fiber);
     // std::cout << "DEBUG: Notified and rescheduled waiting fiber (lockfree)" << std::endl;
 
@@ -46,7 +46,7 @@ bool WaitQueue::notify_one() {
 
 std::size_t WaitQueue::notify_all() {
     std::size_t count = 0;
-    auto&& scheduler = Scheduler::GetScheduler();
+    auto &&scheduler = Scheduler::GetScheduler();
 
     // 持续取出所有等待的协程
     while (auto fiber = pop_front_lockfree()) {
@@ -58,9 +58,7 @@ std::size_t WaitQueue::notify_all() {
     return count;
 }
 
-void WaitQueue::push_back_lockfree(Fiber::ptr fiber) {
-    lock_free_queue_.push_back_lockfree(fiber);
-}
+void WaitQueue::push_back_lockfree(Fiber::ptr fiber) { lock_free_queue_.push_back_lockfree(fiber); }
 
 Fiber::ptr WaitQueue::pop_front_lockfree() {
     // Fiber::ptr out;

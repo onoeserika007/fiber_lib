@@ -3,15 +3,13 @@
 #include <cstdint>
 #include <cstring>
 #include <fcntl.h>
-#include <unistd.h>
-#include "serika/basic/logger.h"
-#include "fiber.h"
-#include <sys/sendfile.h>
-#include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
 #include <unistd.h>
+#include "fiber.h"
+#include "serika/basic/logger.h"
 
 namespace fiber {
 
@@ -24,29 +22,31 @@ static bool setNonBlocking(int fd) {
 }
 
 template<typename Func>
-std::optional<ssize_t> IO::doIO(int fd, IOEvent event, Func&& op, int64_t timeout_ms) {
+std::optional<ssize_t> IO::doIO(int fd, IOEvent event, Func &&op, int64_t timeout_ms) {
     auto current_fiber = Fiber::GetCurrentFiberPtr();
     if (!current_fiber) {
         LOG_ERROR("IO operations must be called from within a fiber");
         return std::nullopt;
     }
-    
-    auto& io_manager = IOManager::getInstance();
-    auto& timer_wheel = TimerWheel::getInstance();
-    
+
+    auto &io_manager = IOManager::getInstance();
+    auto &timer_wheel = TimerWheel::getInstance();
+
     auto timeout_state = std::make_shared<std::atomic<bool>>(false);
     auto woken_state = std::make_shared<std::atomic<bool>>(false);
-    
+
     TimerWheel::TimerPtr timer;
     // timeout_ms == -1 means infinite wait (no timer)
     if (timeout_ms > 0) {
-        timer = timer_wheel.addTimer(static_cast<uint64_t>(timeout_ms),
-            [timeout_state, woken_state, &io_manager, fd, event]() {
-                timeout_state->store(true, std::memory_order_release);
-                if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
-                    io_manager.wakeUp(fd, event);
-                }
-            }, false);
+        timer = timer_wheel.addTimer(
+                static_cast<uint64_t>(timeout_ms),
+                [timeout_state, woken_state, &io_manager, fd, event]() {
+                    timeout_state->store(true, std::memory_order_release);
+                    if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
+                        io_manager.wakeUp(fd, event);
+                    }
+                },
+                false);
     }
 
     // if (event == IOEvent::READ) {
@@ -62,8 +62,7 @@ std::optional<ssize_t> IO::doIO(int fd, IOEvent event, Func&& op, int64_t timeou
         // LOG_INFO("fd:{} is trying to get its result", fd);
 
         // success or failed not for waiting more data(EAGAIN | EWOULDBLOCK) or wait for connecting, complete this IO
-        if (result >= 0
-            || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS && errno != EALREADY)) {
+        if (result >= 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS && errno != EALREADY)) {
             if (timer && !woken_state->exchange(true, std::memory_order_acq_rel)) {
                 timer_wheel.cancel(timer);
             }
@@ -72,7 +71,7 @@ std::optional<ssize_t> IO::doIO(int fd, IOEvent event, Func&& op, int64_t timeou
         }
 
         // LOG_INFO("fd:{} is checking timeout", fd);
-        
+
         if (timeout_state->load(std::memory_order_acquire)) {
             errno = ETIMEDOUT;
             // LOG_INFO("fd:{} Get IO Timeout, return", fd);
@@ -80,7 +79,7 @@ std::optional<ssize_t> IO::doIO(int fd, IOEvent event, Func&& op, int64_t timeou
         }
 
         // LOG_INFO("fd:{} is adding event", fd);
-        
+
         if (!io_manager.addEvent(fd, event, current_fiber)) {
             if (timer && !woken_state->exchange(true, std::memory_order_acq_rel)) {
                 timer_wheel.cancel(timer);
@@ -96,7 +95,7 @@ std::optional<ssize_t> IO::doIO(int fd, IOEvent event, Func&& op, int64_t timeou
         // 也有可能epoll触发后，还没有处理，这里就delevent了，可能造成事件的丢失？
         // 不过这个丢了问题应该也不大，只需要保证唤醒的event不丢就行了
         io_manager.delEvent(fd, event);
-        
+
         if (timeout_state->load(std::memory_order_acquire)) {
             errno = ETIMEDOUT;
             return std::nullopt;
@@ -115,13 +114,14 @@ std::optional<ssize_t> IO::read_et(int fd, void *buffer, size_t len, int64_t tim
 
     auto op = [fd, buffer, len]() -> ssize_t {
         ssize_t total = 0;
-        char* ptr = static_cast<char*>(buffer);
+        char *ptr = static_cast<char *>(buffer);
 
         while (true) {
             ssize_t n = ::read(fd, ptr + total, len - total);
             if (n > 0) {
                 total += n;
-                if (total == static_cast<ssize_t>(len)) break; // buffer满了
+                if (total == static_cast<ssize_t>(len))
+                    break; // buffer满了
                 continue; // 继续读
             } else if (n == 0) {
                 break; // EOF
@@ -139,55 +139,55 @@ std::optional<ssize_t> IO::read_et(int fd, void *buffer, size_t len, int64_t tim
     return doIO(fd, IOEvent::READ, std::move(op), timeout_ms);
 }
 
-std::optional<ssize_t> IO::write(int fd, const void* buffer, size_t len, int64_t timeout_ms) {
+std::optional<ssize_t> IO::write(int fd, const void *buffer, size_t len, int64_t timeout_ms) {
     setNonBlocking(fd);
     // LOG_DEBUG("[fiber::IO] Calling write by fd={}", fd);
-    return doIO(fd, IOEvent::WRITE, [fd, buffer, len]() {
-        return ::write(fd, buffer, len);
-    }, timeout_ms);
+    return doIO(fd, IOEvent::WRITE, [fd, buffer, len]() { return ::write(fd, buffer, len); }, timeout_ms);
 }
 
-std::optional<int> IO::accept(int sockfd, sockaddr* addr, socklen_t* addrlen, int64_t timeout_ms) {
+std::optional<int> IO::accept(int sockfd, sockaddr *addr, socklen_t *addrlen, int64_t timeout_ms) {
     setNonBlocking(sockfd);
     // LOG_DEBUG("[fiber::IO] Calling accept by fd={}", sockfd);
-    auto result = doIO(sockfd, IOEvent::READ, [sockfd, addr, addrlen]() -> ssize_t {
-        return ::accept(sockfd, addr, addrlen);
-    }, timeout_ms);
-    
+    auto result = doIO(
+            sockfd, IOEvent::READ, [sockfd, addr, addrlen]() -> ssize_t { return ::accept(sockfd, addr, addrlen); },
+            timeout_ms);
+
     if (result) {
         int client_fd = static_cast<int>(*result);
-        setNonBlocking(client_fd);  // 新连接的fd也设置为非阻塞
+        setNonBlocking(client_fd); // 新连接的fd也设置为非阻塞
         return client_fd;
     }
     return std::nullopt;
 }
 
-std::vector<int> IO::accept_et(int sockfd, sockaddr* addr, socklen_t* addrlen, int64_t timeout_ms) {
+std::vector<int> IO::accept_et(int sockfd, sockaddr *addr, socklen_t *addrlen, int64_t timeout_ms) {
     setNonBlocking(sockfd);
 
     std::vector<int> recvd_fds;
     // LOG_DEBUG("[fiber::IO] Calling accept by fd={}", sockfd);
-    doIO(sockfd, IOEvent::READ, [sockfd, addr, addrlen, &recvd_fds]() -> ssize_t {
+    doIO(
+            sockfd, IOEvent::READ,
+            [sockfd, addr, addrlen, &recvd_fds]() -> ssize_t {
+                while (true) {
+                    ssize_t client_fd = ::accept(sockfd, addr, addrlen);
+                    if (client_fd >= 0) {
+                        recvd_fds.push_back(client_fd);
+                        continue; // 继续读
+                    } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        // 首次读不到阻塞，之后读完了就应该返回了
+                        return recvd_fds.size() == 0 ? -1 : 1;
+                    } else if (errno == EMFILE) {
+                        LOG_ERROR("[EpollServer] No more fd available: errno={}, error:{}", errno, strerror(errno));
+                        continue;
+                    } else {
+                        LOG_ERROR("[EpollServer] accept failed: errno={}, error:{}", errno, strerror(errno));
+                        return -1; // 错误
+                    }
+                }
 
-        while (true) {
-            ssize_t client_fd = ::accept(sockfd, addr, addrlen);
-            if (client_fd >= 0) {
-                recvd_fds.push_back(client_fd);
-                continue; // 继续读
-            } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // 首次读不到阻塞，之后读完了就应该返回了
-                return recvd_fds.size() == 0 ? -1 : 1;
-            } else if (errno == EMFILE) {
-                LOG_ERROR("[EpollServer] No more fd available: errno={}, error:{}", errno, strerror(errno));
-                continue;
-            } else {
-                LOG_ERROR("[EpollServer] accept failed: errno={}, error:{}", errno, strerror(errno));
-                return -1; // 错误
-            }
-        }
-
-        return 1;
-    }, timeout_ms);
+                return 1;
+            },
+            timeout_ms);
 
     return recvd_fds;
 }
@@ -245,7 +245,8 @@ bool IO::connect(int sockfd, const sockaddr *addr, socklen_t addrlen, int64_t ti
 }
 
 std::optional<ssize_t> IO::writev(int fd, const iovec *iov, int iovcnt, int64_t timeout_ms) {
-    if (fd < 0) return std::nullopt;
+    if (fd < 0)
+        return std::nullopt;
     setNonBlocking(fd);
 
     std::vector<iovec> vec(iov, iov + iovcnt);
@@ -262,7 +263,7 @@ std::optional<ssize_t> IO::writev(int fd, const iovec *iov, int iovcnt, int64_t 
         // construct tmp
         std::vector<iovec> tmp;
         tmp.reserve(vec.size());
-        for (auto &v : vec) {
+        for (auto &v: vec) {
             if (v.iov_len > 0)
                 tmp.push_back(v);
         }
@@ -275,14 +276,15 @@ std::optional<ssize_t> IO::writev(int fd, const iovec *iov, int iovcnt, int64_t 
 
             auto remain = static_cast<size_t>(n);
 
-            for (auto &v : vec) {
-                if (remain == 0) break;
+            for (auto &v: vec) {
+                if (remain == 0)
+                    break;
 
                 if (remain >= v.iov_len) {
                     remain -= v.iov_len;
                     v.iov_len = 0;
                 } else {
-                    v.iov_base = static_cast<char*>(v.iov_base) + remain;
+                    v.iov_base = static_cast<char *>(v.iov_base) + remain;
                     v.iov_len -= remain;
                     remain = 0;
                 }
@@ -300,13 +302,14 @@ std::optional<ssize_t> IO::writev(int fd, const iovec *iov, int iovcnt, int64_t 
         // keep write
         errno = EAGAIN;
         n = -1;
-        return n;   // 让 doIO 判断是否 yield
+        return n; // 让 doIO 判断是否 yield
     };
 
     // 交给 doIO：它会在 EAGAIN 时挂起，恢复后再次执行 op()，直到完全写完或失败
     auto ret = doIO(fd, IOEvent::WRITE, std::move(op), timeout_ms);
 
-    if (!ret) return std::nullopt;
+    if (!ret)
+        return std::nullopt;
 
     // ret 是最终那次 writev 的返回值，而不是总写入量，因此返回 *written
     return static_cast<ssize_t>(written);
@@ -334,13 +337,14 @@ std::optional<ssize_t> IO::recv_et(int fd, void *buffer, size_t len, int flags, 
 
     auto op = [fd, buffer, len, flags]() -> ssize_t {
         ssize_t total = 0;
-        char* ptr = static_cast<char*>(buffer);
+        char *ptr = static_cast<char *>(buffer);
 
         while (true) {
             ssize_t n = ::recv(fd, ptr + total, len - total, flags);
             if (n > 0) {
                 total += n;
-                if (total == static_cast<ssize_t>(len)) break;  // buffer 满
+                if (total == static_cast<ssize_t>(len))
+                    break; // buffer 满
                 continue; // 继续读
             } else if (n == 0) {
                 break; // 对端关闭连接
@@ -373,7 +377,7 @@ int IO::close(int fd) {
 
 int IO::shutdown(int fd, int how) {
 
-    auto& io_manager = IOManager::getInstance();
+    auto &io_manager = IOManager::getInstance();
     if (how == SHUT_RD) {
         io_manager.wakeUp(fd, IOEvent::READ);
     } else if (how == SHUT_WR) {

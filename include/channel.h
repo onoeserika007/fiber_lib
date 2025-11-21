@@ -1,8 +1,8 @@
 #ifndef FIBER_CHANNEL_LOCKFREE_H
 #define FIBER_CHANNEL_LOCKFREE_H
 
-#include <memory>
 #include <atomic>
+#include <memory>
 #include <vector>
 #include "fiber.h"
 #include "timer.h"
@@ -31,20 +31,20 @@ public:
     friend typename Channel<Y>::ptr make_channel(size_t capacity);
 
     ~Channel();
-    
+
     // 阻塞发送和接收
     bool send(T value);
-    bool recv(T& value);
-    
-    // 非阻塞发送和接收  
+    bool recv(T &value);
+
+    // 非阻塞发送和接收
     bool try_send(T value);
-    bool try_recv(T& value);
-    
+    bool try_recv(T &value);
+
     // 带超时的发送和接收
     bool send_timeout(T value, uint64_t timeout_ms);
 
-    bool recv_timeout(T& value, uint64_t timeout_ms);
-    
+    bool recv_timeout(T &value, uint64_t timeout_ms);
+
     // Channel管理
     void close();
     bool is_closed() const;
@@ -56,41 +56,38 @@ public:
 private:
     explicit Channel(size_t capacity = 0);
 
-    Channel(const Channel&) = delete;
-    Channel& operator=(const Channel&) = delete;
+    Channel(const Channel &) = delete;
+    Channel &operator=(const Channel &) = delete;
 
     enum class State { OPEN, CLOSED };
-    
+
     // 无锁环形缓冲区
     struct alignas(64) Slot {
-        std::atomic<T*> data{nullptr};
+        std::atomic<T *> data{nullptr};
     };
-    
+
     size_t capacity_;
     std::vector<Slot> buffer_;
     alignas(64) std::atomic<size_t> head_{0};
-    alignas(64) std::atomic<size_t> tail_{0};  
+    alignas(64) std::atomic<size_t> tail_{0};
     alignas(64) std::atomic<State> state_{State::OPEN};
-    
+
     std::unique_ptr<WaitQueue> send_waiters_;
     std::unique_ptr<WaitQueue> recv_waiters_;
-    
+
     // 辅助方法
     size_t next_index(size_t current) const { return (current + 1) % capacity_; }
     bool is_full_lockfree() const;
     bool is_empty_lockfree() const;
-    bool try_push_lockfree(T&& value);
-    bool try_pop_lockfree(T& value);
+    bool try_push_lockfree(T &&value);
+    bool try_pop_lockfree(T &value);
 };
 
 // 实现
 template<typename T>
-Channel<T>::Channel(size_t capacity) 
-    : capacity_(capacity == 0 ? 2 : capacity + 1),
-      buffer_(capacity_),
-      send_waiters_(std::make_unique<WaitQueue>()),
-      recv_waiters_(std::make_unique<WaitQueue>()) {
-}
+Channel<T>::Channel(size_t capacity) :
+    capacity_(capacity == 0 ? 2 : capacity + 1), buffer_(capacity_), send_waiters_(std::make_unique<WaitQueue>()),
+    recv_waiters_(std::make_unique<WaitQueue>()) {}
 
 template<typename T>
 Channel<T>::~Channel() {
@@ -102,20 +99,20 @@ bool Channel<T>::send(T value) {
     if (state_.load(std::memory_order_acquire) == State::CLOSED) {
         return false;
     }
-    
+
     if (try_push_lockfree(std::move(value))) {
         recv_waiters_->notify_one();
         return true;
     }
-    
+
     while (true) {
         // yield cpu
         send_waiters_->wait();
-        
+
         if (state_.load(std::memory_order_acquire) == State::CLOSED) {
             return false;
         }
-        
+
         if (try_push_lockfree(std::move(value))) {
             recv_waiters_->notify_one();
             return true;
@@ -124,24 +121,24 @@ bool Channel<T>::send(T value) {
 }
 
 template<typename T>
-bool Channel<T>::recv(T& value) {
+bool Channel<T>::recv(T &value) {
     if (try_pop_lockfree(value)) {
         send_waiters_->notify_one();
         return true;
     }
-    
+
     if (state_.load(std::memory_order_acquire) == State::CLOSED && is_empty_lockfree()) {
         return false;
     }
-    
+
     while (true) {
         recv_waiters_->wait();
-        
+
         if (try_pop_lockfree(value)) {
             send_waiters_->notify_one();
             return true;
         }
-        
+
         if (state_.load(std::memory_order_acquire) == State::CLOSED && is_empty_lockfree()) {
             return false;
         }
@@ -153,17 +150,17 @@ bool Channel<T>::try_send(T value) {
     if (state_.load(std::memory_order_relaxed) == State::CLOSED) {
         return false;
     }
-    
+
     if (try_push_lockfree(std::move(value))) {
         recv_waiters_->notify_one();
         return true;
     }
-    
+
     return false;
 }
 
 template<typename T>
-bool Channel<T>::try_recv(T& value) {
+bool Channel<T>::try_recv(T &value) {
     if (try_pop_lockfree(value)) {
         send_waiters_->notify_one();
         return true;
@@ -192,7 +189,7 @@ size_t Channel<T>::size() const {
 
 template<typename T>
 size_t Channel<T>::capacity() const {
-    return capacity_ - 1;  // -1 because ring buffer needs one empty slot
+    return capacity_ - 1; // -1 because ring buffer needs one empty slot
 }
 
 template<typename T>
@@ -221,22 +218,20 @@ bool Channel<T>::is_empty_lockfree() const {
 }
 
 template<typename T>
-bool Channel<T>::try_push_lockfree(T&& value) {
+bool Channel<T>::try_push_lockfree(T &&value) {
     size_t current_tail = tail_.load(std::memory_order_relaxed);
     size_t next_tail = next_index(current_tail);
-    
+
     if (next_tail == head_.load(std::memory_order_acquire)) {
-        return false;  // 满了
+        return false; // 满了
     }
-    
-    T* new_data = new T(std::move(value));
-    T* expected = nullptr;
-    
-    if (buffer_[current_tail].data.compare_exchange_weak(
-            expected, new_data, 
-            std::memory_order_release, 
-            std::memory_order_relaxed)) {
-        
+
+    T *new_data = new T(std::move(value));
+    T *expected = nullptr;
+
+    if (buffer_[current_tail].data.compare_exchange_weak(expected, new_data, std::memory_order_release,
+                                                         std::memory_order_relaxed)) {
+
         tail_.store(next_tail, std::memory_order_release);
         return true;
     } else {
@@ -246,21 +241,21 @@ bool Channel<T>::try_push_lockfree(T&& value) {
 }
 
 template<typename T>
-bool Channel<T>::try_pop_lockfree(T& value) {
+bool Channel<T>::try_pop_lockfree(T &value) {
     size_t current_head = head_.load(std::memory_order_relaxed);
-    
+
     if (current_head == tail_.load(std::memory_order_acquire)) {
-        return false;  // 空了
+        return false; // 空了
     }
-    
-    T* data = buffer_[current_head].data.exchange(nullptr, std::memory_order_acquire);
+
+    T *data = buffer_[current_head].data.exchange(nullptr, std::memory_order_acquire);
     if (data != nullptr) {
         value = std::move(*data);
         delete data;
         head_.store(next_index(current_head), std::memory_order_release);
         return true;
     }
-    
+
     return false;
 }
 
@@ -273,48 +268,50 @@ bool Channel<T>::send_timeout(T value, uint64_t timeout_ms) {
         recv_waiters_->notify_one();
         return true;
     }
-    
+
     // 检查是否已关闭
     if (state_.load(std::memory_order_acquire) == State::CLOSED) {
         return false;
     }
-    
+
     // 获取当前协程
     auto current_fiber = Fiber::GetCurrentFiberPtr();
     if (!current_fiber) {
         throw std::runtime_error("send_timeout must be called from within a fiber");
     }
-    
+
     // 创建超时状态
     auto timeout_state = std::make_shared<std::atomic<bool>>(false);
     auto woken_state = std::make_shared<std::atomic<bool>>(false);
-    
+
     // 添加定时器 - 通过waitqueue唤醒而不是直接调度
-    auto& timer_wheel = TimerWheel::getInstance();
-    auto timer = timer_wheel.addTimer(timeout_ms,
-        [timeout_state, woken_state, waiters = send_waiters_.get()]() {
-            timeout_state->store(true, std::memory_order_release);
-            if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
-                // 通过waitqueue唤醒
-                waiters->notify_one();
-            }
-        }, false);
-    
+    auto &timer_wheel = TimerWheel::getInstance();
+    auto timer = timer_wheel.addTimer(
+            timeout_ms,
+            [timeout_state, woken_state, waiters = send_waiters_.get()]() {
+                timeout_state->store(true, std::memory_order_release);
+                if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
+                    // 通过waitqueue唤醒
+                    waiters->notify_one();
+                }
+            },
+            false);
+
     // 进入等待循环
     while (true) {
         send_waiters_->wait();
-        
+
         // 检查是否超时
         if (timeout_state->load(std::memory_order_acquire)) {
             return false;
         }
-        
+
         // 检查是否已关闭
         if (state_.load(std::memory_order_acquire) == State::CLOSED) {
             timer_wheel.cancel(timer);
             return false;
         }
-        
+
         // 尝试发送
         if (try_push_lockfree(std::move(value))) {
             // 成功了，取消定时器
@@ -328,52 +325,54 @@ bool Channel<T>::send_timeout(T value, uint64_t timeout_ms) {
 }
 
 template<typename T>
-bool Channel<T>::recv_timeout(T& value, uint64_t timeout_ms) {
+bool Channel<T>::recv_timeout(T &value, uint64_t timeout_ms) {
     // 先尝试非阻塞接收
     if (try_pop_lockfree(value)) {
         send_waiters_->notify_one();
         return true;
     }
-    
+
     // 检查是否已关闭且为空
     if (state_.load(std::memory_order_acquire) == State::CLOSED && is_empty_lockfree()) {
         return false;
     }
 
     if (timeout_ms <= 0) {
-        return false;  // 超时时间为0或负数
+        return false; // 超时时间为0或负数
     }
-    
+
     // 获取当前协程
     auto current_fiber = Fiber::GetCurrentFiberPtr();
     if (!current_fiber) {
         throw std::runtime_error("recv_timeout must be called from within a fiber");
     }
-    
+
     // 创建超时状态
     auto timeout_state = std::make_shared<std::atomic<bool>>(false);
     auto woken_state = std::make_shared<std::atomic<bool>>(false);
-    
+
     // 添加定时器 - 通过waitqueue唤醒而不是直接调度
-    auto& timer_wheel = TimerWheel::getInstance();
-    auto timer = timer_wheel.addTimer(timeout_ms,
-        [timeout_state, woken_state, waiters = recv_waiters_.get()]() {
-            timeout_state->store(true, std::memory_order_release);
-            if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
-                // 通过waitqueue唤醒
-                waiters->notify_one();
-            }
-        }, false);
-    
+    auto &timer_wheel = TimerWheel::getInstance();
+    auto timer = timer_wheel.addTimer(
+            timeout_ms,
+            [timeout_state, woken_state, waiters = recv_waiters_.get()]() {
+                timeout_state->store(true, std::memory_order_release);
+                if (!woken_state->exchange(true, std::memory_order_acq_rel)) {
+                    // 通过waitqueue唤醒
+                    waiters->notify_one();
+                }
+            },
+            false);
+
     // 进入等待循环
     while (true) {
         recv_waiters_->wait();
-        
+
         // 检查是否超时
         if (timeout_state->load(std::memory_order_acquire)) {
             return false;
         }
-        
+
         // 尝试接收
         if (try_pop_lockfree(value)) {
             // 成功了，取消定时器
@@ -383,7 +382,7 @@ bool Channel<T>::recv_timeout(T& value, uint64_t timeout_ms) {
             send_waiters_->notify_one();
             return true;
         }
-        
+
         // 检查是否已关闭且为空
         if (state_.load(std::memory_order_acquire) == State::CLOSED && is_empty_lockfree()) {
             timer_wheel.cancel(timer);

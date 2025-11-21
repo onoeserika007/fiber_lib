@@ -3,14 +3,15 @@
 #include <cassert>
 #include <iostream>
 #include <thread>
-#include "serika/basic/logger.h"
 #include "fiber_consumer.h"
 #include "io_manager.h"
+#include "serika/basic/config_manager.h"
+#include "serika/basic/logger.h"
 #include "timer.h"
 
 namespace fiber {
-    Scheduler::Scheduler(): state_(SchedulerState::STOPPED) {
-    init(4);
+Scheduler::Scheduler() : state_(SchedulerState::STOPPED) {
+    init(ConfigManager::Instance().get<int>("fiber.num_consumer", 4));
     // init(std::thread::hardware_concurrency());
     LOG_DEBUG("Scheduler created");
 }
@@ -24,22 +25,22 @@ Scheduler::~Scheduler() {
 
 void Scheduler::init(int worker_count) {
     assert(state_ == SchedulerState::STOPPED && "Scheduler already running");
-    
+
     state_ = SchedulerState::RUNNING;
-    
+
     // 多线程模式
     startConsumers(worker_count);
     LOG_DEBUG("Scheduler initialized ({} workers)", worker_count);
 }
 
 void Scheduler::run() {
-    auto& timer_wheel = TimerWheel::getInstance();
-    auto& io_manager = IOManager::getInstance();
+    auto &timer_wheel = TimerWheel::getInstance();
+    auto &io_manager = IOManager::getInstance();
     uint64_t tick_interval_ms = timer_wheel.getTickInterval();
-    
+
     io_manager.init();
     LOG_DEBUG("Scheduler event loop started (tick interval: {}ms)", tick_interval_ms);
-    
+
     while (state_ == SchedulerState::RUNNING) {
         auto timeout_ms = timer_wheel.getNextTimeOutMs();
         // epoll 正好取代 sleep
@@ -59,21 +60,15 @@ void Scheduler::stop() {
     if (state_ == SchedulerState::STOPPED) {
         return;
     }
-    
+
     state_ = SchedulerState::STOPPING;
 }
 
-bool Scheduler::isRunning() const {
-    return state_ == SchedulerState::RUNNING;
-}
+bool Scheduler::isRunning() const { return state_ == SchedulerState::RUNNING; }
 
-SchedulerState Scheduler::getState() const {
-    return state_;
-}
+SchedulerState Scheduler::getState() const { return state_; }
 
-bool Scheduler::hasReadyFibers() const {
-    return !ready_queue_.empty();
-}
+bool Scheduler::hasReadyFibers() const { return !ready_queue_.empty(); }
 
 Scheduler &Scheduler::GetScheduler() {
     static Scheduler scheduler;
@@ -115,21 +110,33 @@ void Scheduler::scheduleImmediate(Fiber::ptr fiber, int64_t exclude) {
     }
 }
 
-int Scheduler::getWorkerCount() const {
-    return static_cast<int>(consumers_.size());
+void Scheduler::stealWork(uint64_t stealer_id) {
+    auto& stealer = consumers_[stealer_id];
+    for (auto& consumer: consumers_) {
+        if (stealer_id == consumer->id()) {
+            continue;
+        }
+
+        if (auto&& task_opt = consumer->popTask()) {
+            task_opt.value()->SetConsumerId(stealer_id);
+            stealer->schedule(task_opt.value());
+        }
+    }
 }
 
-FiberConsumer* Scheduler::selectConsumer(int64_t exclude) {
+int Scheduler::getWorkerCount() const { return static_cast<int>(consumers_.size()); }
+
+FiberConsumer *Scheduler::selectConsumer(int64_t exclude) {
     if (consumers_.empty()) {
         return nullptr;
     }
-    
+
     // 选择队列最短的consumer
-    FiberConsumer* best = nullptr;
+    FiberConsumer *best = nullptr;
 
     size_t min_queue_size = 0;
-    
-    for (auto& consumer : consumers_) {
+
+    for (auto &consumer: consumers_) {
         if (consumer->id() == exclude) {
             continue;
         }
@@ -146,13 +153,13 @@ FiberConsumer* Scheduler::selectConsumer(int64_t exclude) {
             best = consumer.get();
         }
     }
-    
+
     return best;
 }
 
 void Scheduler::startConsumers(int count) {
     consumers_.clear();
-    
+
     for (int i = 0; i < count; ++i) {
         auto consumer = std::make_unique<FiberConsumer>(i, this);
         consumer->start();
@@ -161,7 +168,7 @@ void Scheduler::startConsumers(int count) {
 }
 
 void Scheduler::stopConsumers() {
-    for (auto& consumer : consumers_) {
+    for (auto &consumer: consumers_) {
         consumer->stop();
     }
     consumers_.clear();
