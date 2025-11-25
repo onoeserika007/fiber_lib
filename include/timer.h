@@ -15,6 +15,9 @@
 #include "lockfree/lockfree_linked_list.h"
 
 namespace fiber {
+class FiberConsumer;
+}
+namespace fiber {
 
 /**
  * @brief 定时器节点
@@ -52,10 +55,12 @@ public:
     using Callback = std::function<void()>;
     using TimerPtr = std::shared_ptr<TimerNode>;
 
+    friend FiberConsumer;
+
     /**
      * @brief 获取全局时间轮实例
      */
-    static TimerWheel &getInstance();
+    // static TimerWheel &getInstance();
 
     ~TimerWheel();
 
@@ -115,7 +120,7 @@ public:
     uint32_t getNextTimeOutMs();
 
 private:
-    TimerWheel(size_t slots = 256, Duration tick_interval = Duration(10));
+    TimerWheel(size_t slots = 256, Duration tick_interval = Duration(3));
 
     // 禁止拷贝
     TimerWheel(const TimerWheel &) = delete;

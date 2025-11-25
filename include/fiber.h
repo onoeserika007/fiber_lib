@@ -68,8 +68,10 @@ public:
      * 创建并立即执行goroutine (Go语义)
      * 立即在多线程中开始执行
      * @param func 要执行的函数
+     * @param feature_id 特征数
+     * @param stack_size 栈大小
      */
-    static void go(FiberFunction func, size_t stack_size = UContext::DEFAULT_STACK_SIZE);
+    static void go(FiberFunction func, uint64_t feature_id = 0, size_t stack_size = UContext::DEFAULT_STACK_SIZE);
 
     /**
      * 获取工作线程数量
@@ -100,6 +102,10 @@ public:
 
     std::optional<uint64_t> GetConsumerId() const;
 
+    void SetTraceId(uint64_t trace_id);
+
+    uint64_t GetTraceId() const;
+
     ~Fiber();
 
 private:
@@ -120,6 +126,7 @@ private:
 
 
     uint64_t id_;
+    uint64_t trace_id_ = 0;
     std::optional<uint64_t> consumer_id_;
     FiberState state_;
     FiberFunction func_;

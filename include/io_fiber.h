@@ -41,7 +41,7 @@ public:
 
 private:
     template<typename Func>
-    static std::optional<ssize_t> doIO(int fd, IOEvent event, Func &&op, int64_t timeout_ms);
+    static std::optional<ssize_t> doIO(int fd, IOEvent event, Func &&op, bool use_et, int64_t timeout_ms);
 };
 
 } // namespace fiber

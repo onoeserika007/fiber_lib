@@ -147,18 +147,14 @@ Fiber::ptr Fiber::GetMainFiber() {
 // Go语义接口实现
 // =========================
 
-void Fiber::go(FiberFunction func, size_t stack_size) {
+void Fiber::go(FiberFunction func, uint64_t feature_id, size_t stack_size) {
+    auto &&scheduler = Scheduler::getInst();
+
     auto fiber = Fiber::create(std::move(func), stack_size);
     fiber->setRunMode(RunMode::SCHEDULED);
+    fiber->SetTraceId(fiber->getId() + feature_id);
 
-    // 获取多线程调度器并立即调度
-    auto current = GetCurrentFiberPtr();
-    auto &&scheduler = Scheduler::GetScheduler();
-    if (current) {
-        scheduler.scheduleImmediate(fiber, current->GetConsumerId().value_or(-1));
-    } else {
-        scheduler.scheduleImmediate(fiber);
-    }
+    scheduler.scheduleImmediate(fiber);
 }
 
 Fiber::ptr Fiber::create(FiberFunction func, size_t stack_size) {
@@ -170,7 +166,7 @@ Fiber::ptr Fiber::create(FiberFunction func, size_t stack_size) {
 }
 
 int Fiber::getWorkerCount() {
-    auto &&scheduler = Scheduler::GetScheduler();
+    auto &&scheduler = Scheduler::getInst();
     return scheduler.getWorkerCount();
 }
 
@@ -187,13 +183,14 @@ void Fiber::sleep(uint64_t ms) {
         return;
     }
 
-    auto &timer_wheel = TimerWheel::getInstance();
+    auto &timer_wheel = Scheduler::getThreadLocalTimerManager();
     timer_wheel.addTimer(
             ms,
             [current]() {
                 // 定时器到期，重新调度该协程
-                auto &&scheduler = Scheduler::GetScheduler();
-                scheduler.scheduleImmediate(current, current->GetConsumerId().value_or(-1));
+                auto &&scheduler = Scheduler::getInst();
+                // scheduler.scheduleImmediate(current, current->GetConsumerId().value_or(-1));
+                scheduler.scheduleImmediate(current);
             },
             false);
 
@@ -217,5 +214,13 @@ void Fiber::ResetMainFiber() {
 void Fiber::SetConsumerId(uint64_t cos_id) { consumer_id_ = cos_id; }
 
 std::optional<uint64_t> Fiber::GetConsumerId() const { return consumer_id_; }
+
+void Fiber::SetTraceId(uint64_t trace_id) {
+    trace_id_ = trace_id;
+}
+
+uint64_t Fiber::GetTraceId() const {
+    return trace_id_;
+}
 
 } // namespace fiber

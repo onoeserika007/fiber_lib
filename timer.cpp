@@ -10,10 +10,10 @@ namespace fiber {
 
 // ==================== TimerWheel 实现 ====================
 
-TimerWheel &TimerWheel::getInstance() {
-    static TimerWheel instance;
-    return instance;
-}
+// TimerWheel &TimerWheel::getInstance() {
+//     static TimerWheel instance;
+//     return instance;
+// }
 
 uint32_t TimerWheel::getNextTimeOutMs() {
     auto now = Clock::now();

@@ -3,16 +3,21 @@
 #include <thread>
 
 #include "fiber_consumer.h"
+#include "timer.h"
+#include "io_manager.h"
 #include "scheduler.h"
 #include "serika/basic/logger.h"
 
 namespace fiber {
 
 FiberConsumer::FiberConsumer(int id, Scheduler *scheduler) :
-    id_(id), scheduler_(scheduler)
+    id_(id), scheduler_(scheduler),
     // , queue_(std::make_unique<moodycamel::ConcurrentQueue<std::shared_ptr<Fiber>>>()) {
-    ,
-    queue_(std::make_unique<LockFreeLinkedList<std::shared_ptr<Fiber>>>()) {}
+    queue_(std::make_unique<LockFreeLinkedList<std::shared_ptr<Fiber>>>()),
+    io_manager_(std::unique_ptr<IOManager>(new IOManager())),
+    timer_wheel_(std::unique_ptr<TimerWheel>(new TimerWheel())) {
+    io_manager_->init();
+}
 
 FiberConsumer::~FiberConsumer() { stop(); }
 
@@ -57,6 +62,7 @@ bool FiberConsumer::schedule(Fiber::ptr fiber) {
 
     // return queue_->try_enqueue(fiber);
     queue_->push_back_lockfree(fiber);
+    io_manager_->wakeUpEpoll();
     return true;
 }
 
@@ -79,6 +85,11 @@ void FiberConsumer::consumerLoop() {
 
     while (running_.load(std::memory_order_acquire)) {
         processTask();
+        auto timeout_ms = timer_wheel_->getNextTimeOutMs();
+        io_manager_->processEvents(timeout_ms);
+        // process newly wakeups
+        processTask();
+        timer_wheel_->tick();
     }
 
     Fiber::ResetMainFiber();
@@ -94,35 +105,26 @@ void FiberConsumer::processTask() {
     // }
 
     Fiber::ptr task = queue_->pop_front_lockfree().value_or(nullptr);
+    while (task) {
+        if (task->GetConsumerId().has_value()) {
+            assert(task->GetConsumerId().value() == id() && "Fiber scheduled across thread!");
+        }
+        task->SetConsumerId(id());
+        // 执行fiber任务
+        task->resume();
 
-    if (!task) {
-        std::this_thread::yield();
-        // try steal
-        // Scheduler& scheduler = Scheduler::GetScheduler();
-        // scheduler.stealWork(id());
-        return;
+        if (task->getState() == FiberState::SUSPENDED) {
+            // if not blocked
+            // while (!queue_->enqueue(task)) {
+            //     std::this_thread::yield();
+            // }
+            queue_->push_back_lockfree(task);
+        }
+
+        // 如果状态是DONE，fiber已完成，task的shared_ptr会自动释放
+        task = queue_->pop_front_lockfree().value_or(nullptr);
     }
 
-    // LOG_INFO("[FiberConsumer::processTask] resuming a fiber");
-
-    // auto parent_fiber = task->getParentFiber();
-    // assert(parent_fiber.get() == nullptr && "A scheduling fiber can't have parent!");
-
-    if (task->GetConsumerId().has_value()) {
-        assert(task->GetConsumerId().value() == id() && "Fiber scheduled across thread!");
-    }
-    task->SetConsumerId(id());
-    // 执行fiber任务
-    task->resume();
-
-    if (task->getState() == FiberState::SUSPENDED) {
-        // if not blocked
-        // while (!queue_->enqueue(task)) {
-        //     std::this_thread::yield();
-        // }
-        queue_->push_back_lockfree(task);
-    }
-    // 如果状态是DONE，fiber已完成，task的shared_ptr会自动释放
 }
 
 } // namespace fiber

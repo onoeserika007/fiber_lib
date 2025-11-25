@@ -37,7 +37,7 @@ bool WaitQueue::notify_one() {
     }
 
     // 获取调度器并重新调度协程
-    auto &&scheduler = Scheduler::GetScheduler();
+    auto &&scheduler = Scheduler::getInst();
     scheduler.scheduleImmediate(fiber);
     // std::cout << "DEBUG: Notified and rescheduled waiting fiber (lockfree)" << std::endl;
 
@@ -46,7 +46,7 @@ bool WaitQueue::notify_one() {
 
 std::size_t WaitQueue::notify_all() {
     std::size_t count = 0;
-    auto &&scheduler = Scheduler::GetScheduler();
+    auto &&scheduler = Scheduler::getInst();
 
     // 持续取出所有等待的协程
     while (auto fiber = pop_front_lockfree()) {

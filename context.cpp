@@ -210,7 +210,7 @@ void AsmContext::initialize(void (*func)()) {
 
     context_.ss_sp = static_cast<char *>(stack_);
     context_.ss_size = stack_size_;
-    context_.can_enter.store(false);
+    // context_.can_enter.store(false);
     //
     // coctx_make(&context_, reinterpret_cast<coctx_pfn_t>(&fiber_trampoline), nullptr, nullptr);
 
@@ -248,12 +248,12 @@ void AsmContext::switchTo(Context *to) {
         //     LOG_INFO("Switch to a old fiber, addr:{}", reinterpret_cast<uint64_t>(ctx->context_.regs[kRETAddr]));
         // }
         bool expected = true;
-        if (!context_.can_enter.compare_exchange_strong(expected, false, std::memory_order_release,
-                                                        std::memory_order_relaxed)) {
-            throw std::runtime_error("A fiber context loaded before it can be accessed!");
-        }
-
-        ctx->context_.can_enter.store(true);
+        // if (!context_.can_enter.compare_exchange_strong(expected, false, std::memory_order_release,
+        //                                                 std::memory_order_relaxed)) {
+        //     throw std::runtime_error("A fiber context loaded before it can be accessed!");
+        // }
+        //
+        // ctx->context_.can_enter.store(true);
 
         // LOG_INFO("Switching to pc:{:#016x}, sp:{:#016x}",
         //     reinterpret_cast<uint64_t>(ctx->context_.regs[kRETAddr]),

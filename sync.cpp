@@ -168,7 +168,7 @@ bool FiberCondition::wait_for<int64_t, std::milli>(std::unique_lock<FiberMutex> 
     auto notified_state = std::make_shared<std::atomic<bool>>(false);
 
     // 添加定时器 - 定时器到期时标记超时并唤醒fiber
-    auto &timer_wheel = TimerWheel::getInstance();
+    auto &timer_wheel = Scheduler::getThreadLocalTimerManager();
     auto timer = timer_wheel.addTimer(
             static_cast<uint64_t>(ms.count()),
             [timeout_state, notified_state, waiters = waiters_.get()]() {

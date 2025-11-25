@@ -9,6 +9,12 @@
 #include "lockfree/lockfree_linked_list.h"
 
 namespace fiber {
+class TimerWheel;
+}
+namespace fiber {
+class IOManager;
+}
+namespace fiber {
 
 class Scheduler;
 
@@ -19,6 +25,7 @@ class Scheduler;
  */
 class FiberConsumer {
 public:
+    friend Scheduler;
     FiberConsumer(int id, Scheduler *scheduler);
     ~FiberConsumer();
 
@@ -43,8 +50,10 @@ private:
     std::atomic<bool> running_{false};
 
     // 使用lock-free队列存储Fiber::ptr
-    std::unique_ptr<LockFreeLinkedList<std::shared_ptr<Fiber>>> queue_;
+    std::unique_ptr<LockFreeLinkedList<Fiber::ptr>> queue_;
     // std::unique_ptr<moodycamel::ConcurrentQueue<Fiber::ptr>> queue_;
+    std::unique_ptr<IOManager> io_manager_;
+    std::unique_ptr<TimerWheel> timer_wheel_;
 
     void consumerLoop();
     void processTask();

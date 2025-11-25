@@ -108,7 +108,7 @@ struct coctx_t {
 #endif
     size_t ss_size{};
     char *ss_sp{};
-    std::atomic<bool> can_enter{true};
+    // std::atomic<bool> can_enter{true};
 };
 
 int coctx_init(coctx_t *ctx);

@@ -28,31 +28,15 @@ void Scheduler::init(int worker_count) {
 
     state_ = SchedulerState::RUNNING;
 
-    // 多线程模式
     startConsumers(worker_count);
-    LOG_DEBUG("Scheduler initialized ({} workers)", worker_count);
+    LOG_DEBUG("Scheduler init ({} workers)", worker_count_);
 }
 
 void Scheduler::run() {
-    auto &timer_wheel = TimerWheel::getInstance();
-    auto &io_manager = IOManager::getInstance();
-    uint64_t tick_interval_ms = timer_wheel.getTickInterval();
 
-    io_manager.init();
-    LOG_DEBUG("Scheduler event loop started (tick interval: {}ms)", tick_interval_ms);
+    // 多线程模式
+    consumers_[0]->consumerLoop();
 
-    while (state_ == SchedulerState::RUNNING) {
-        auto timeout_ms = timer_wheel.getNextTimeOutMs();
-        // epoll 正好取代 sleep
-        io_manager.processEvents(static_cast<int>(timeout_ms));
-        timer_wheel.tick();
-    }
-
-    LOG_DEBUG("Scheduler stopping");
-    io_manager.shutdown();
-    timer_wheel.stop();
-    stopConsumers();
-    state_ = SchedulerState::STOPPED;
     LOG_DEBUG("Scheduler stopped");
 }
 
@@ -61,7 +45,9 @@ void Scheduler::stop() {
         return;
     }
 
-    state_ = SchedulerState::STOPPING;
+    state_ = SchedulerState::STOPPED;
+
+    stopConsumers();
 }
 
 bool Scheduler::isRunning() const { return state_ == SchedulerState::RUNNING; }
@@ -70,13 +56,13 @@ SchedulerState Scheduler::getState() const { return state_; }
 
 bool Scheduler::hasReadyFibers() const { return !ready_queue_.empty(); }
 
-Scheduler &Scheduler::GetScheduler() {
+Scheduler &Scheduler::getInst() {
     static Scheduler scheduler;
     return scheduler;
 }
 
 // 多线程调度方法
-void Scheduler::scheduleImmediate(Fiber::ptr fiber, int64_t exclude) {
+void Scheduler::scheduleImmediate(const Fiber::ptr& fiber) {
     if (state_ != SchedulerState::RUNNING) {
         LOG_WARN("[Scheduler] pushing fiber when scheduler is not setup, loss fiber!");
         return;
@@ -96,7 +82,7 @@ void Scheduler::scheduleImmediate(Fiber::ptr fiber, int64_t exclude) {
 
     // LOG_INFO("Scheduling fiber {}", fiber->getId());
     for (;;) {
-        FiberConsumer *consumer = selectConsumer(exclude);
+        FiberConsumer *consumer = selectConsumer(fiber->GetTraceId());
 
         if (!consumer) {
             LOG_ERROR("No consumer to select, fiber lost");
@@ -110,57 +96,67 @@ void Scheduler::scheduleImmediate(Fiber::ptr fiber, int64_t exclude) {
     }
 }
 
-void Scheduler::stealWork(uint64_t stealer_id) {
-    auto& stealer = consumers_[stealer_id];
-    for (auto& consumer: consumers_) {
-        if (stealer_id == consumer->id()) {
-            continue;
-        }
-
-        if (auto&& task_opt = consumer->popTask()) {
-            task_opt.value()->SetConsumerId(stealer_id);
-            stealer->schedule(task_opt.value());
-        }
-    }
-}
-
 int Scheduler::getWorkerCount() const { return static_cast<int>(consumers_.size()); }
 
-FiberConsumer *Scheduler::selectConsumer(int64_t exclude) {
+FiberConsumer *Scheduler::getThreadLocalConsumer() {
+    auto& scheduler = Scheduler::getInst();
+    auto currentFiber = Fiber::current_fiber_;
+    assert(currentFiber && currentFiber->GetConsumerId() && "cannot get consumer in non-fiber env");
+
+    return scheduler.consumers_[currentFiber->GetConsumerId().value()].get();
+}
+
+IOManager &Scheduler::getThreadLocalIOManager() {
+    auto consumer = getThreadLocalConsumer();
+    return *(consumer->io_manager_);
+}
+
+TimerWheel &Scheduler::getThreadLocalTimerManager() {
+    auto consumer = getThreadLocalConsumer();
+    return *(consumer->timer_wheel_);
+}
+
+FiberConsumer *Scheduler::selectConsumer(uint64_t trace_id) {
     if (consumers_.empty()) {
         return nullptr;
     }
 
     // 选择队列最短的consumer
-    FiberConsumer *best = nullptr;
+    // FiberConsumer *best = nullptr;
+    //
+    // size_t min_queue_size = 0;
+    //
+    // for (auto &consumer: consumers_) {
+    //     if (consumer->id() == exclude) {
+    //         continue;
+    //     }
+    //
+    //     if (!best) {
+    //         best = consumer.get();
+    //         min_queue_size = consumer->getQueueSize();
+    //         continue;
+    //     }
+    //
+    //     size_t queue_size = consumer->getQueueSize();
+    //     if (queue_size < min_queue_size) {
+    //         min_queue_size = queue_size;
+    //         best = consumer.get();
+    //     }
+    // }
+    //
+    // return best;
 
-    size_t min_queue_size = 0;
-
-    for (auto &consumer: consumers_) {
-        if (consumer->id() == exclude) {
-            continue;
-        }
-
-        if (!best) {
-            best = consumer.get();
-            min_queue_size = consumer->getQueueSize();
-            continue;
-        }
-
-        size_t queue_size = consumer->getQueueSize();
-        if (queue_size < min_queue_size) {
-            min_queue_size = queue_size;
-            best = consumer.get();
-        }
-    }
-
-    return best;
+    // Use Hash
+    const uint64_t index = trace_id % consumers_.size();
+    return consumers_[index].get();
 }
 
 void Scheduler::startConsumers(int count) {
     consumers_.clear();
 
-    for (int i = 0; i < count; ++i) {
+    consumers_.emplace_back(std::make_unique<FiberConsumer>(0, this));
+    consumers_[0]->running_ = true;
+    for (int i = 1; i < count; ++i) {
         auto consumer = std::make_unique<FiberConsumer>(i, this);
         consumer->start();
         consumers_.push_back(std::move(consumer));
